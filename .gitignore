@@ -1,0 +1,39 @@
+# Environment
+.env
+
+# Data volumes
+mnt/n8n/postgres_data/
+mnt/n8n/n8n_data/
+mnt/vllm/
+mnt/openclaw/workspace/
+mnt/minio/data/
+mnt/comfyui/
+mnt/omnivoice/
+scratch/
+
+
+
+# OpenClaw secrets (keep config structure, ignore runtime)
+mnt/openclaw/config/agents/main/agent/auth-profiles.json
+mnt/openclaw/config/agents/main/sessions/
+mnt/openclaw/config/identity/
+mnt/openclaw/config/devices/
+mnt/openclaw/config/logs/
+mnt/openclaw/config/canvas/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log

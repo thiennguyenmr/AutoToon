@@ -1,0 +1,261 @@
+{
+  "id": "crawl-bachhoaxanh-001",
+  "name": "Crawl Bach Hoa Xanh - Save to PostgreSQL",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 400]
+    },
+    {
+      "parameters": {
+        "command": "node /home/node/fetch-page.js 'https://www.bachhoaxanh.com'"
+      },
+      "id": "http-1",
+      "name": "Fetch Page (Chromium)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [320, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout;\nconst parsed = JSON.parse(raw);\nreturn [{ json: { html: parsed.html, statusCode: parsed.statusCode, url: parsed.url } }];"
+      },
+      "id": "parse-1",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 400]
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "title",
+              "cssSelector": "title",
+              "returnValue": "text"
+            },
+            {
+              "key": "metaDescription",
+              "cssSelector": "meta[name=\"description\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "metaKeywords",
+              "cssSelector": "meta[name=\"keywords\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "ogTitle",
+              "cssSelector": "meta[property=\"og:title\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "ogDescription",
+              "cssSelector": "meta[property=\"og:description\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "ogImage",
+              "cssSelector": "meta[property=\"og:image\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "ogUrl",
+              "cssSelector": "meta[property=\"og:url\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "canonical",
+              "cssSelector": "link[rel=\"canonical\"]",
+              "returnValue": "attribute",
+              "attribute": "href"
+            },
+            {
+              "key": "h1",
+              "cssSelector": "h1",
+              "returnValue": "text",
+              "returnArray": true
+            },
+            {
+              "key": "h2",
+              "cssSelector": "h2",
+              "returnValue": "text",
+              "returnArray": true
+            },
+            {
+              "key": "h3",
+              "cssSelector": "h3",
+              "returnValue": "text",
+              "returnArray": true
+            },
+            {
+              "key": "links",
+              "cssSelector": "a[href]",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "returnArray": true
+            },
+            {
+              "key": "images",
+              "cssSelector": "img[src]",
+              "returnValue": "attribute",
+              "attribute": "src",
+              "returnArray": true
+            },
+            {
+              "key": "imagesAlt",
+              "cssSelector": "img[alt]",
+              "returnValue": "attribute",
+              "attribute": "alt",
+              "returnArray": true
+            },
+            {
+              "key": "favicon",
+              "cssSelector": "link[rel=\"icon\"], link[rel=\"shortcut icon\"]",
+              "returnValue": "attribute",
+              "attribute": "href"
+            },
+            {
+              "key": "viewport",
+              "cssSelector": "meta[name=\"viewport\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "charset",
+              "cssSelector": "meta[charset]",
+              "returnValue": "attribute",
+              "attribute": "charset"
+            },
+            {
+              "key": "robots",
+              "cssSelector": "meta[name=\"robots\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "bodyText",
+              "cssSelector": "body",
+              "returnValue": "text"
+            }
+          ]
+        },
+        "options": {
+          "sourceData": "json",
+          "dataProperty": "html"
+        }
+      },
+      "id": "html-1",
+      "name": "HTML Extract",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [760, 400],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst parseResponse = $('Parse Response').first().json;\nconst url = parseResponse.url || 'https://www.bachhoaxanh.com';\nconst statusCode = parseResponse.statusCode || 200;\n\n// Count stats\nconst totalLinks = (data.links || []).length;\nconst internalLinks = (data.links || []).filter(l => l && (l.startsWith('/') || l.includes('bachhoaxanh.com'))).length;\nconst externalLinks = totalLinks - internalLinks;\nconst totalImages = (data.images || []).length;\nconst totalImagesWithAlt = (data.imagesAlt || []).length;\nconst wordCount = (data.bodyText || '').split(/\\s+/).filter(w => w.length > 0).length;\n\nreturn [{\n  json: {\n    url: url,\n    status_code: statusCode,\n    title: data.title || null,\n    title_length: (data.title || '').length,\n    meta_description: data.metaDescription || null,\n    meta_description_length: (data.metaDescription || '').length,\n    meta_keywords: data.metaKeywords || null,\n    og_title: data.ogTitle || null,\n    og_description: data.ogDescription || null,\n    og_image: data.ogImage || null,\n    og_url: data.ogUrl || null,\n    canonical_url: data.canonical || null,\n    favicon: data.favicon || null,\n    viewport: data.viewport || null,\n    charset: data.charset || null,\n    robots_meta: data.robots || null,\n    h1_tags: JSON.stringify(data.h1 || []),\n    h1_count: (data.h1 || []).length,\n    h2_tags: JSON.stringify(data.h2 || []),\n    h2_count: (data.h2 || []).length,\n    h3_tags: JSON.stringify(data.h3 || []),\n    h3_count: (data.h3 || []).length,\n    total_links: totalLinks,\n    internal_links: internalLinks,\n    external_links: externalLinks,\n    total_images: totalImages,\n    images_with_alt: totalImagesWithAlt,\n    images_without_alt: totalImages - totalImagesWithAlt,\n    word_count: wordCount,\n    links_json: JSON.stringify((data.links || []).slice(0, 500)),\n    images_json: JSON.stringify((data.images || []).slice(0, 200)),\n    crawled_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "code-1",
+      "name": "Transform Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO crawl_data (\n  url, status_code, title, title_length,\n  meta_description, meta_description_length, meta_keywords,\n  og_title, og_description, og_image, og_url,\n  canonical_url, favicon, viewport, charset, robots_meta,\n  h1_tags, h1_count, h2_tags, h2_count, h3_tags, h3_count,\n  total_links, internal_links, external_links,\n  total_images, images_with_alt, images_without_alt,\n  word_count, links_json, images_json, crawled_at\n) VALUES (\n  '{{ $json.url }}',\n  {{ $json.status_code }},\n  '{{ $json.title?.replace(/'/g, \"''\") }}',\n  {{ $json.title_length }},\n  '{{ $json.meta_description?.replace(/'/g, \"''\") }}',\n  {{ $json.meta_description_length }},\n  '{{ $json.meta_keywords?.replace(/'/g, \"''\") }}',\n  '{{ $json.og_title?.replace(/'/g, \"''\") }}',\n  '{{ $json.og_description?.replace(/'/g, \"''\") }}',\n  '{{ $json.og_image }}',\n  '{{ $json.og_url }}',\n  '{{ $json.canonical_url }}',\n  '{{ $json.favicon }}',\n  '{{ $json.viewport }}',\n  '{{ $json.charset }}',\n  '{{ $json.robots_meta }}',\n  '{{ $json.h1_tags?.replace(/'/g, \"''\") }}',\n  {{ $json.h1_count }},\n  '{{ $json.h2_tags?.replace(/'/g, \"''\") }}',\n  {{ $json.h2_count }},\n  '{{ $json.h3_tags?.replace(/'/g, \"''\") }}',\n  {{ $json.h3_count }},\n  {{ $json.total_links }},\n  {{ $json.internal_links }},\n  {{ $json.external_links }},\n  {{ $json.total_images }},\n  {{ $json.images_with_alt }},\n  {{ $json.images_without_alt }},\n  {{ $json.word_count }},\n  '{{ $json.links_json?.replace(/'/g, \"''\") }}',\n  '{{ $json.images_json?.replace(/'/g, \"''\") }}',\n  '{{ $json.crawled_at }}'\n)\nRETURNING id, url, title, crawled_at;",
+        "options": {}
+      },
+      "id": "pg-insert",
+      "name": "Save to PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1200, 400],
+      "credentials": {
+        "postgres": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inserted = $input.first().json;\nconst crawlData = $('Transform Data').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Crawl completed and saved to PostgreSQL',\n    data: {\n      id: inserted.id,\n      url: crawlData.url,\n      title: crawlData.title,\n      title_length: crawlData.title_length,\n      meta_description: crawlData.meta_description,\n      meta_description_length: crawlData.meta_description_length,\n      h1_count: crawlData.h1_count,\n      h2_count: crawlData.h2_count,\n      h3_count: crawlData.h3_count,\n      total_links: crawlData.total_links,\n      internal_links: crawlData.internal_links,\n      external_links: crawlData.external_links,\n      total_images: crawlData.total_images,\n      images_with_alt: crawlData.images_with_alt,\n      images_without_alt: crawlData.images_without_alt,\n      word_count: crawlData.word_count,\n      crawled_at: crawlData.crawled_at\n    }\n  }\n}];"
+      },
+      "id": "code-response",
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 400]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Fetch Page (Chromium)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Page (Chromium)": {
+      "main": [
+        [
+          { "node": "Parse Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          { "node": "HTML Extract", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "HTML Extract": {
+      "main": [
+        [
+          { "node": "Transform Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transform Data": {
+      "main": [
+        [
+          { "node": "Save to PostgreSQL", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Save to PostgreSQL": {
+      "main": [
+        [
+          { "node": "Response", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Crawl"
+    }
+  ],
+  "triggerCount": 0
+}

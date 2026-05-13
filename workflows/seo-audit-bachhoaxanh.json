@@ -1,0 +1,1082 @@
+{
+  "id": "seo-audit-bachhoaxanh-001",
+  "name": "SEO Audit - Website",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "seo-audit",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        112,
+        400
+      ],
+      "webhookId": "seo-audit-webhook"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url || 'https://www.bachhoaxanh.com' }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "http-get-page",
+      "name": "HTTP Request - Get Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "title",
+              "cssSelector": "title"
+            },
+            {
+              "key": "metaDescription",
+              "cssSelector": "meta[name=\"description\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "metaKeywords",
+              "cssSelector": "meta[name=\"keywords\"]",
+              "returnValue": "attribute",
+              "attribute": "content"
+            },
+            {
+              "key": "h1",
+              "cssSelector": "h1",
+              "returnArray": true
+            },
+            {
+              "key": "h2",
+              "cssSelector": "h2",
+              "returnArray": true
+            },
+            {
+              "key": "h3",
+              "cssSelector": "h3",
+              "returnArray": true
+            },
+            {
+              "key": "links",
+              "cssSelector": "a[href]",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "returnArray": true
+            },
+            {
+              "key": "images",
+              "cssSelector": "img",
+              "returnValue": "html",
+              "returnArray": true
+            },
+            {
+              "key": "imagesWithoutAlt",
+              "cssSelector": "img:not([alt]), img[alt=\"\"]",
+              "returnValue": "html",
+              "returnArray": true
+            },
+            {
+              "key": "canonical",
+              "cssSelector": "link[rel=\"canonical\"]",
+              "returnValue": "attribute",
+              "attribute": "href"
+            },
+            {
+              "key": "bodyText",
+              "cssSelector": "body"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "html-extract",
+      "name": "HTML Extract",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        528,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "title-data",
+              "name": "title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "title-length",
+              "name": "titleLength",
+              "value": "={{ ($json.title || '').length }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-title",
+      "name": "Title",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "desc-data",
+              "name": "description",
+              "value": "={{ $json.metaDescription }}",
+              "type": "string"
+            },
+            {
+              "id": "desc-length",
+              "name": "descriptionLength",
+              "value": "={{ ($json.metaDescription || '').length }}",
+              "type": "number"
+            },
+            {
+              "id": "keywords",
+              "name": "keywords",
+              "value": "={{ $json.metaKeywords }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-description",
+      "name": "Description",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "links-internal",
+              "name": "links",
+              "value": "={{ JSON.stringify($json.links) }}",
+              "type": "string"
+            },
+            {
+              "id": "links-count",
+              "name": "totalLinks",
+              "value": "={{ ($json.links || []).length }}",
+              "type": "number"
+            },
+            {
+              "id": "h1-tags",
+              "name": "h1Tags",
+              "value": "={{ JSON.stringify($json.h1) }}",
+              "type": "string"
+            },
+            {
+              "id": "h2-tags",
+              "name": "h2Tags",
+              "value": "={{ JSON.stringify($json.h2) }}",
+              "type": "string"
+            },
+            {
+              "id": "h3-tags",
+              "name": "h3Tags",
+              "value": "={{ JSON.stringify($json.h3) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-links",
+      "name": "Links",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "body-text",
+              "name": "bodyText",
+              "value": "={{ ($json.bodyText || '').substring(0, 5000) }}",
+              "type": "string"
+            },
+            {
+              "id": "word-count",
+              "name": "wordCount",
+              "value": "={{ ($json.bodyText || '').split(/\\s+/).filter(w => w.length > 0).length }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-keyword-density",
+      "name": "Keyword Density",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "images-data",
+              "name": "totalImages",
+              "value": "={{ ($json.images || []).length }}",
+              "type": "number"
+            },
+            {
+              "id": "images-no-alt",
+              "name": "imagesWithoutAlt",
+              "value": "={{ ($json.imagesWithoutAlt || []).length }}",
+              "type": "number"
+            },
+            {
+              "id": "images-html",
+              "name": "imagesHtml",
+              "value": "={{ JSON.stringify(($json.images || []).slice(0, 50)) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-check-image",
+      "name": "Check Image",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "code-data",
+              "name": "canonical",
+              "value": "={{ $('HTML Extract').item.json.canonical }}",
+              "type": "string"
+            },
+            {
+              "id": "has-canonical",
+              "name": "hasCanonical",
+              "value": "={{ !!$('HTML Extract').item.json.canonical }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-code-analysis",
+      "name": "Code Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "domain-url",
+              "name": "domain",
+              "value": "={{ new URL($('Webhook').item.json.url || 'https://www.bachhoaxanh.com').origin }}",
+              "type": "string"
+            },
+            {
+              "id": "full-url",
+              "name": "fullUrl",
+              "value": "={{ $('Webhook').item.json.url || 'https://www.bachhoaxanh.com' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-domain",
+      "name": "Domain",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        304,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.domain }}/robots.txt",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "http-robots",
+      "name": "Robots.txt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        512,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "robots-content",
+              "name": "robotsTxt",
+              "value": "={{ typeof $json.data === 'string' ? $json.data : JSON.stringify($json) }}",
+              "type": "string"
+            },
+            {
+              "id": "has-robots",
+              "name": "hasRobotsTxt",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-robots-analysis",
+      "name": "Robots Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        736,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Domain').item.json.domain }}/sitemap.xml",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "http-sitemap",
+      "name": "Sitemap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        512,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sitemap-data",
+              "name": "hasSitemap",
+              "value": "={{ typeof $json.data === 'string' && $json.data.includes('<urlset') }}",
+              "type": "boolean"
+            },
+            {
+              "id": "sitemap-content",
+              "name": "sitemapContent",
+              "value": "={{ typeof $json.data === 'string' ? $json.data.substring(0, 2000) : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-code",
+      "name": "Code",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        736,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $('Webhook').item.json.url || 'https://www.bachhoaxanh.com' }}"
+            },
+            {
+              "name": "strategy",
+              "value": "mobile"
+            },
+            {
+              "name": "category",
+              "value": "performance"
+            },
+            {
+              "name": "category",
+              "value": "seo"
+            },
+            {
+              "name": "category",
+              "value": "accessibility"
+            },
+            {
+              "name": "category",
+              "value": "best-practices"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "http-pagespeed",
+      "name": "PageSpeed API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        512,
+        1232
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "chain-title",
+      "name": "Title Analysis",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        1152,
+        -192
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "chain-description",
+      "name": "Description Analysis",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        1152,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "chain-content",
+      "name": "Content Analysis",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        1152,
+        160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "chain-density",
+      "name": "Density Analysis",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        1152,
+        336
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "chain-alts",
+      "name": "Alts Analysis",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        1152,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "deepseek-title",
+      "name": "DeepSeek Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        -112
+      ],
+      "credentials": {
+        "deepSeekApi": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "DeepSeek API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "deepseek-desc",
+      "name": "DeepSeek Chat Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        80
+      ],
+      "credentials": {
+        "deepSeekApi": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "DeepSeek API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "deepseek-content",
+      "name": "DeepSeek Chat Model2",
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        256
+      ],
+      "credentials": {
+        "deepSeekApi": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "DeepSeek API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "deepseek-density",
+      "name": "DeepSeek Chat Model3",
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        432
+      ],
+      "credentials": {
+        "deepSeekApi": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "DeepSeek API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "deepseek-alts",
+      "name": "DeepSeek Chat Model4",
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        608
+      ],
+      "credentials": {
+        "deepSeekApi": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "DeepSeek API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-1",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1424,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gather all analysis results\nconst items = $input.all();\n\n// Extract analyses from merged items\nlet titleAnalysis = '';\nlet descriptionAnalysis = '';\nlet contentAnalysis = '';\nlet densityAnalysis = '';\nlet altsAnalysis = '';\nlet robotsTxt = '';\nlet hasSitemap = false;\nlet pageSpeedData = null;\nlet hasCanonical = false;\n\nfor (const item of items) {\n  const d = item.json;\n  if (d.text && !titleAnalysis) titleAnalysis = d.text;\n  else if (d.text && !descriptionAnalysis) descriptionAnalysis = d.text;\n  else if (d.text && !contentAnalysis) contentAnalysis = d.text;\n  else if (d.text && !densityAnalysis) densityAnalysis = d.text;\n  else if (d.text && !altsAnalysis) altsAnalysis = d.text;\n  \n  if (d.robotsTxt) robotsTxt = d.robotsTxt;\n  if (d.hasSitemap !== undefined) hasSitemap = d.hasSitemap;\n  if (d.hasCanonical !== undefined) hasCanonical = d.hasCanonical;\n  if (d.lighthouseResult) pageSpeedData = d;\n}\n\n// Extract PageSpeed scores\nlet performanceScore = 'N/A';\nlet seoScore = 'N/A';\nlet accessibilityScore = 'N/A';\nlet bestPracticesScore = 'N/A';\n\nif (pageSpeedData && pageSpeedData.lighthouseResult) {\n  const categories = pageSpeedData.lighthouseResult.categories;\n  performanceScore = categories.performance ? Math.round(categories.performance.score * 100) : 'N/A';\n  seoScore = categories.seo ? Math.round(categories.seo.score * 100) : 'N/A';\n  accessibilityScore = categories.accessibility ? Math.round(categories.accessibility.score * 100) : 'N/A';\n  bestPracticesScore = categories['best-practices'] ? Math.round(categories['best-practices'].score * 100) : 'N/A';\n}\n\nreturn [{\n  json: {\n    titleAnalysis,\n    descriptionAnalysis,\n    contentAnalysis,\n    densityAnalysis,\n    altsAnalysis,\n    robotsTxt: robotsTxt ? 'Found' : 'Not Found',\n    hasSitemap,\n    hasCanonical,\n    performanceScore,\n    seoScore,\n    accessibilityScore,\n    bestPracticesScore,\n    url: $('Webhook').item.json.url || 'https://www.bachhoaxanh.com',\n    analyzedAt: new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })\n  }\n}];"
+      },
+      "id": "fn-report",
+      "name": "Functions to report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst html = `<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>SEO Audit Report - Bach Hoa Xanh</title>\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }\n    .container { max-width: 900px; margin: 0 auto; padding: 20px; }\n    .header { background: linear-gradient(135deg, #1a73e8, #0d47a1); color: white; padding: 30px; border-radius: 12px; margin-bottom: 24px; text-align: center; }\n    .header h1 { font-size: 28px; margin-bottom: 8px; }\n    .header p { opacity: 0.9; font-size: 14px; }\n    .scores-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }\n    .score-card { background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }\n    .score-card .score { font-size: 36px; font-weight: 700; margin: 8px 0; }\n    .score-card .label { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }\n    .score-good { color: #0cce6b; }\n    .score-avg { color: #ffa400; }\n    .score-bad { color: #ff4e42; }\n    .section { background: white; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }\n    .section h2 { font-size: 18px; color: #1a73e8; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #e8f0fe; }\n    .section pre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; background: #f8f9fa; padding: 16px; border-radius: 8px; }\n    .check-item { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }\n    .check-item:last-child { border-bottom: none; }\n    .check-pass { color: #0cce6b; margin-right: 8px; font-size: 18px; }\n    .check-fail { color: #ff4e42; margin-right: 8px; font-size: 18px; }\n    .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>&#x1f50d; SEO Audit Report</h1>\n      <p><strong>URL:</strong> ${data.url}</p>\n      <p><strong>Analyzed:</strong> ${data.analyzedAt}</p>\n    </div>\n\n    <div class=\"scores-grid\">\n      <div class=\"score-card\">\n        <div class=\"label\">Performance</div>\n        <div class=\"score ${Number(data.performanceScore) >= 90 ? 'score-good' : Number(data.performanceScore) >= 50 ? 'score-avg' : 'score-bad'}\">${data.performanceScore}</div>\n      </div>\n      <div class=\"score-card\">\n        <div class=\"label\">SEO</div>\n        <div class=\"score ${Number(data.seoScore) >= 90 ? 'score-good' : Number(data.seoScore) >= 50 ? 'score-avg' : 'score-bad'}\">${data.seoScore}</div>\n      </div>\n      <div class=\"score-card\">\n        <div class=\"label\">Accessibility</div>\n        <div class=\"score ${Number(data.accessibilityScore) >= 90 ? 'score-good' : Number(data.accessibilityScore) >= 50 ? 'score-avg' : 'score-bad'}\">${data.accessibilityScore}</div>\n      </div>\n      <div class=\"score-card\">\n        <div class=\"label\">Best Practices</div>\n        <div class=\"score ${Number(data.bestPracticesScore) >= 90 ? 'score-good' : Number(data.bestPracticesScore) >= 50 ? 'score-avg' : 'score-bad'}\">${data.bestPracticesScore}</div>\n      </div>\n    </div>\n\n    <div class=\"section\">\n      <h2>&#x1f3f7;&#xfe0f; Title Analysis</h2>\n      <pre>${data.titleAnalysis}</pre>\n    </div>\n\n    <div class=\"section\">\n      <h2>&#x1f4dd; Description Analysis</h2>\n      <pre>${data.descriptionAnalysis}</pre>\n    </div>\n\n    <div class=\"section\">\n      <h2>&#x1f4c4; Content Analysis</h2>\n      <pre>${data.contentAnalysis}</pre>\n    </div>\n\n    <div class=\"section\">\n      <h2>&#x1f50e; Keyword Density Analysis</h2>\n      <pre>${data.densityAnalysis}</pre>\n    </div>\n\n    <div class=\"section\">\n      <h2>&#x1f5bc;&#xfe0f; Image Alt Analysis</h2>\n      <pre>${data.altsAnalysis}</pre>\n    </div>\n\n    <div class=\"section\">\n      <h2>&#x2699;&#xfe0f; Technical SEO Checks</h2>\n      <div class=\"check-item\">\n        <span class=\"${data.robotsTxt === 'Found' ? 'check-pass' : 'check-fail'}\">${data.robotsTxt === 'Found' ? '&#x2705;' : '&#x274c;'}</span>\n        <span>Robots.txt: ${data.robotsTxt}</span>\n      </div>\n      <div class=\"check-item\">\n        <span class=\"${data.hasSitemap ? 'check-pass' : 'check-fail'}\">${data.hasSitemap ? '&#x2705;' : '&#x274c;'}</span>\n        <span>Sitemap.xml: ${data.hasSitemap ? 'Found' : 'Not Found'}</span>\n      </div>\n      <div class=\"check-item\">\n        <span class=\"${data.hasCanonical ? 'check-pass' : 'check-fail'}\">${data.hasCanonical ? '&#x2705;' : '&#x274c;'}</span>\n        <span>Canonical Tag: ${data.hasCanonical ? 'Present' : 'Missing'}</span>\n      </div>\n    </div>\n\n    <div class=\"footer\">\n      <p>Generated by SEO Audit Workflow - Bach Hoa Xanh | Powered by n8n + DeepSeek</p>\n    </div>\n  </div>\n</body>\n</html>`;\n\nreturn [{ json: { html, ...data } }];"
+      },
+      "id": "gen-html",
+      "name": "Generate HTML REPORT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "seo-audit@yourdomain.com",
+        "toEmail": "={{ $('Webhook').item.json.email || 'your-email@example.com' }}",
+        "subject": "=SEO Audit Report - {{ $('Webhook').item.json.url || 'bachhoaxanh.com' }} - {{ $json.analyzedAt }}",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2032,
+        736
+      ],
+      "webhookId": "421fb5b4-f52f-424f-ad17-32ed944e193b"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Get Page",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Domain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Get Page": {
+      "main": [
+        [
+          {
+            "node": "HTML Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML Extract": {
+      "main": [
+        [
+          {
+            "node": "Title",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Description",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Links",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Keyword Density",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Image",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Title": {
+      "main": [
+        [
+          {
+            "node": "Title Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Description": {
+      "main": [
+        [
+          {
+            "node": "Description Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Links": {
+      "main": [
+        [
+          {
+            "node": "Content Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword Density": {
+      "main": [
+        [
+          {
+            "node": "Density Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Image": {
+      "main": [
+        [
+          {
+            "node": "Alts Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Domain": {
+      "main": [
+        [
+          {
+            "node": "Robots.txt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sitemap",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "PageSpeed API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Robots.txt": {
+      "main": [
+        [
+          {
+            "node": "Robots Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sitemap": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Title Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Description Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Density Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alts Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Robots Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "PageSpeed API": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Functions to report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Functions to report": {
+      "main": [
+        [
+          {
+            "node": "Generate HTML REPORT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate HTML REPORT": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Title Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Description Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Content Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Density Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Alts Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "triggerCount": 0,
+  "tags": [
+    {
+      "name": "SEO"
+    }
+  ]
+}

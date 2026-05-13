@@ -1,0 +1,114 @@
+{
+  "id": "crawl-vnexpress-001",
+  "name": "Crawl VnExpress - Save to PostgreSQL",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "vne-manual-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://vnexpress.net",
+        "operation": "getPageContent",
+        "options": {
+          "waitUntil": "networkidle2",
+          "timeout": 30000,
+          "stealth": true,
+          "browserWSEndpoint": "ws://chromium:3000"
+        }
+      },
+      "id": "vne-puppeteer-1",
+      "name": "Fetch Page (Puppeteer)",
+      "type": "n8n-nodes-puppeteer.puppeteer",
+      "typeVersion": 1,
+      "position": [320, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.body;\nconst url = 'https://vnexpress.net';\nconst statusCode = 200;\n\n// Helper: get attribute from tag string\nfunction getAttr(tag, attr) {\n  const re = new RegExp(attr + '=[\"\\']([^\"\\']*)[\"\\']', 'i');\n  const m = tag.match(re);\n  return m ? m[1] : null;\n}\n\n// Helper: get all matches of a regex\nfunction matchAll(str, re) {\n  const results = [];\n  let m;\n  while ((m = re.exec(str)) !== null) results.push(m);\n  return results;\n}\n\n// Title\nconst titleMatch = html.match(/<title[^>]*>(.*?)<\\/title>/is);\nconst title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n\n// Meta tags\nfunction getMeta(name) {\n  const re = new RegExp('<meta[^>]*name=[\"\\']' + name + '[\"\\'][^>]*>', 'i');\n  const m = html.match(re);\n  return m ? (getAttr(m[0], 'content') || '') : '';\n}\nfunction getOg(prop) {\n  const re = new RegExp('<meta[^>]*property=[\"\\']' + prop + '[\"\\'][^>]*>', 'i');\n  const m = html.match(re);\n  return m ? (getAttr(m[0], 'content') || '') : '';\n}\n\nconst metaDesc = getMeta('description');\nconst metaKeywords = getMeta('keywords');\nconst viewport = getMeta('viewport');\nconst robots = getMeta('robots');\nconst ogTitle = getOg('og:title');\nconst ogDesc = getOg('og:description');\nconst ogImage = getOg('og:image');\nconst ogUrl = getOg('og:url');\n\n// Charset\nconst charsetMatch = html.match(/<meta[^>]*charset=[\"']?([^\"'\\s>]+)/i);\nconst charset = charsetMatch ? charsetMatch[1] : 'utf-8';\n\n// Canonical\nconst canonicalMatch = html.match(/<link[^>]*rel=[\"']canonical[\"'][^>]*href=[\"']([^\"']*)[\"']/i);\nconst canonical = canonicalMatch ? canonicalMatch[1] : '';\n\n// Favicon\nconst faviconMatch = html.match(/<link[^>]*rel=[\"'][^\"']*icon[^\"']*[\"'][^>]*href=[\"']([^\"']*)[\"']/i);\nconst favicon = faviconMatch ? faviconMatch[1] : '';\n\n// Headings\nfunction getHeadings(tag) {\n  const re = new RegExp('<' + tag + '[^>]*>(.*?)<\\/' + tag + '>', 'gis');\n  return matchAll(html, re).map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(t => t);\n}\nconst h1 = getHeadings('h1');\nconst h2 = getHeadings('h2');\nconst h3 = getHeadings('h3');\n\n// Links\nconst linkMatches = matchAll(html, /<a[^>]*href=[\"']([^\"']*)[\"']/gi);\nconst links = linkMatches.map(m => m[1]);\nconst internalLinks = links.filter(l => l.startsWith('/') || l.includes('vnexpress.net')).length;\n\n// Images\nconst imgTags = matchAll(html, /<img[^>]*>/gi);\nconst images = imgTags.map(m => getAttr(m[0], 'src')).filter(Boolean);\nconst imagesWithAlt = imgTags.filter(m => { const a = getAttr(m[0], 'alt'); return a && a.length > 0; }).length;\n\n// Word count (strip tags from body)\nconst bodyMatch = html.match(/<body[^>]*>(.*)<\\/body>/is);\nlet bodyText = '';\nif (bodyMatch) {\n  bodyText = bodyMatch[1].replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '').replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\n}\nconst wordCount = bodyText.split(/\\s+/).filter(w => w.length > 0).length;\n\nreturn [{\n  json: {\n    url,\n    status_code: statusCode,\n    title,\n    title_length: title.length,\n    meta_description: metaDesc,\n    meta_description_length: metaDesc.length,\n    meta_keywords: metaKeywords,\n    og_title: ogTitle,\n    og_description: ogDesc,\n    og_image: ogImage,\n    og_url: ogUrl,\n    canonical_url: canonical,\n    favicon,\n    viewport,\n    charset,\n    robots_meta: robots,\n    h1_tags: JSON.stringify(h1),\n    h1_count: h1.length,\n    h2_tags: JSON.stringify(h2),\n    h2_count: h2.length,\n    h3_tags: JSON.stringify(h3),\n    h3_count: h3.length,\n    total_links: links.length,\n    internal_links: internalLinks,\n    external_links: links.length - internalLinks,\n    total_images: images.length,\n    images_with_alt: imagesWithAlt,\n    images_without_alt: images.length - imagesWithAlt,\n    word_count: wordCount,\n    links_json: JSON.stringify(links.slice(0, 500)),\n    images_json: JSON.stringify(images.slice(0, 200)),\n    crawled_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "vne-code-1",
+      "name": "Extract & Transform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "crawl_data",
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "vne-pg-insert",
+      "name": "Save to PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1000, 400],
+      "credentials": {
+        "postgres": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inserted = $input.first().json;\nconst crawlData = $('Extract & Transform').first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Crawl completed and saved to PostgreSQL',\n    data: {\n      id: inserted.id,\n      url: crawlData.url,\n      title: crawlData.title,\n      title_length: crawlData.title_length,\n      meta_description: crawlData.meta_description,\n      meta_description_length: crawlData.meta_description_length,\n      h1_count: crawlData.h1_count,\n      h2_count: crawlData.h2_count,\n      h3_count: crawlData.h3_count,\n      total_links: crawlData.total_links,\n      internal_links: crawlData.internal_links,\n      external_links: crawlData.external_links,\n      total_images: crawlData.total_images,\n      images_with_alt: crawlData.images_with_alt,\n      images_without_alt: crawlData.images_without_alt,\n      word_count: crawlData.word_count,\n      crawled_at: crawlData.crawled_at\n    }\n  }\n}];"
+      },
+      "id": "vne-code-response",
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1220, 400]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Fetch Page (Puppeteer)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Page (Puppeteer)": {
+      "main": [
+        [
+          { "node": "Extract & Transform", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract & Transform": {
+      "main": [
+        [
+          { "node": "Save to PostgreSQL", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Save to PostgreSQL": {
+      "main": [
+        [
+          { "node": "Response", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Crawl"
+    }
+  ],
+  "triggerCount": 0
+}

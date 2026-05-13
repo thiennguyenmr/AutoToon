@@ -1,0 +1,149 @@
+{
+  "id": "crawl-mottruyentrung",
+  "name": "Crawl mottruyentrung.net.vn",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "slug",
+              "value": "tro-ve-tu-do",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "out_subdir",
+              "value": "tro-ve-tu-do",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "delay",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "limit",
+              "value": 0,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import sys, io, contextlib, re\nfrom pathlib import Path\n\nsys.path.insert(0, '/data/scripts')\nimport crawl_mottruyentrung as cm\n\nparams = _items[0]['json']\nslug = params.get('slug') or cm.DEFAULT_SLUG\nout_dir = Path('/data/crawl-output') / (params.get('out_subdir') or slug)\ndelay = float(params.get('delay') or 1.0)\nlimit_raw = params.get('limit')\nlimit = int(limit_raw) if limit_raw and int(limit_raw) > 0 else None\n\nbuf = io.StringIO()\ntry:\n    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):\n        cm.crawl(slug, out_dir, delay, limit)\n    error = None\nexcept Exception as exc:\n    error = f'{type(exc).__name__}: {exc}'\n\nlog = buf.getvalue()\ntotal_match = re.search(r'Tìm thấy (\\d+) chương', log)\ncrawled = len(re.findall(r'^\\[>\\] ', log, flags=re.M))\nskipped = len(re.findall(r'^\\[=\\] ', log, flags=re.M))\nfailed = len(re.findall(r'^\\s*! Lỗi:', log, flags=re.M))\ncombined_match = re.search(r'File gộp: (.+)', log)\n\nreturn [{\n    'json': {\n        'success': error is None,\n        'error': error,\n        'slug': slug,\n        'out_dir': str(out_dir),\n        'total_chapters': int(total_match.group(1)) if total_match else None,\n        'crawled_now': crawled,\n        'skipped_existing': skipped,\n        'failed': failed,\n        'combined_file': combined_match.group(1).strip() if combined_match else None,\n        'log_tail': log[-2000:],\n    }\n}]\n"
+      },
+      "id": "exec-1",
+      "name": "Run Crawler (Python)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import os, re, sys, hmac, hashlib, datetime, unicodedata, urllib.request, urllib.parse\nfrom pathlib import Path\nfrom urllib.parse import urlparse\n\nsys.path.insert(0, '/data/scripts')\nimport crawl_mottruyentrung as cm\n\nprev = _items[0]['json']\nif not prev.get('success'):\n    return [{'json': {'success': False, 'error': 'crawler did not succeed', 'crawler_result': prev}}]\n\nslug = prev['slug']\nout_dir = Path(prev['out_dir'])\n\ndef vn_slug(s):\n    s = unicodedata.normalize('NFKD', s)\n    s = ''.join(c for c in s if not unicodedata.combining(c))\n    s = s.replace('đ', 'd').replace('Đ', 'D').lower()\n    s = re.sub(r'\\s+', '-', s.strip())\n    s = re.sub(r'[^a-z0-9\\-_.]', '', s)\n    s = re.sub(r'-+', '-', s).strip('-.')\n    return s\n\ntitle = slug\ntry:\n    main_html = cm.http_request(f'{cm.BASE_URL}/manga/{slug}/')\n    m = re.search(r'<meta\\s+property=\"og:title\"[^>]*content=\"([^\"]+)\"', main_html, re.I)\n    if m:\n        title = m.group(1).strip()\nexcept Exception:\n    pass\n\nfolder = vn_slug(title) or slug\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket = os.environ.get('MINIO_BUCKET', 'mottruyen')\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_put(key, body, content_type):\n    parsed = urlparse(endpoint)\n    host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ')\n    datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(body).hexdigest()\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m):\n        return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region)\n    k_service = _sign(k_region, 's3')\n    k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    req = urllib.request.Request(url, data=body, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(req, timeout=60) as resp:\n        return resp.status\n\nuploaded = []\nerrors = []\nfor f in sorted(out_dir.glob('*.txt')):\n    body = f.read_bytes()\n    key = f'{folder}/{f.name}'\n    try:\n        status = s3_put(key, body, 'text/plain; charset=utf-8')\n        uploaded.append({'key': key, 'size': len(body), 'status': status})\n    except Exception as e:\n        errors.append({'file': f.name, 'error': f'{type(e).__name__}: {e}'})\n\nreturn [{\n    'json': {\n        'success': len(errors) == 0 and len(uploaded) > 0,\n        'slug': slug,\n        'title': title,\n        'folder': folder,\n        'out_dir': str(out_dir),\n        'bucket': bucket,\n        'endpoint': endpoint,\n        'uploaded_count': len(uploaded),\n        'failed_count': len(errors),\n        'uploaded': uploaded,\n        'errors': errors,\n    }\n}]\n"
+      },
+      "id": "upload-1",
+      "name": "Upload to MinIO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import os, re, json, hmac, hashlib, datetime, urllib.request, urllib.parse\nfrom pathlib import Path\nfrom urllib.parse import urlparse\n\nprev = _items[0]['json']\nif not prev.get('success'):\n    return [{'json': {'success': False, 'error': 'upload step did not succeed', 'upload_result': prev}}]\n\nslug = prev.get('slug')\nfolder = prev['folder']\nout_dir = Path(prev['out_dir'])\n\nvllm_url = os.environ.get('VLLM_BASE_URL', 'http://vllm:8000/v1').rstrip('/') + '/chat/completions'\nvllm_key = os.environ.get('VLLM_API_KEY', 'vllm-local')\nmodel = os.environ.get('VLLM_MODEL', 'gpt-oss-20b')\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket = 'mottruyen-refactored'\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ncache_dir = out_dir / '_refactored'\ncache_dir.mkdir(parents=True, exist_ok=True)\n\ndef call_vllm(text, reasoning='low'):\n    prompt = text + '\\n\\nchỉnh sửa lỗi chính tả của đoạn văn trên, chỉ trả về văn bản đã sửa, giữ nguyên định dạng và xuống dòng, không thêm giải thích.'\n    body = json.dumps({\n        'model': model,\n        'messages': [{'role': 'user', 'content': prompt}],\n        'temperature': 0.1,\n        'max_tokens': 32768,\n        'chat_template_kwargs': {'reasoning_effort': reasoning},\n    }).encode('utf-8')\n    req = urllib.request.Request(vllm_url, data=body, method='POST', headers={\n        'Content-Type': 'application/json',\n        'Authorization': f'Bearer {vllm_key}',\n    })\n    with urllib.request.urlopen(req, timeout=900) as r:\n        d = json.loads(r.read())\n    choice = d['choices'][0]\n    return (choice['message'].get('content') or '').strip(), choice.get('finish_reason')\n\ndef s3_put(key, body, content_type):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(body).hexdigest()\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m):\n        return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    req = urllib.request.Request(url, data=body, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(req, timeout=60) as resp:\n        return resp.status\n\nchapter_files = sorted([f for f in out_dir.glob('*.txt') if re.match(r'^\\d{3}-', f.name)])\nrefactored = []\nerrors = []\ncombined_parts = []\n\nfor f in chapter_files:\n    raw = f.read_text(encoding='utf-8')\n    cache_path = cache_dir / f.name\n    if cache_path.exists() and cache_path.stat().st_size > 0:\n        new_text = cache_path.read_text(encoding='utf-8')\n        cached = True\n    else:\n        new_text = ''\n        last_finish = None\n        vllm_exc = None\n        try:\n            for attempt_reasoning in ('low', 'medium'):\n                new_text, last_finish = call_vllm(raw, reasoning=attempt_reasoning)\n                if new_text:\n                    break\n        except Exception as e:\n            vllm_exc = f'{type(e).__name__}: {e}'\n        if not new_text:\n            reason = vllm_exc if vllm_exc else f'empty after retry (finish={last_finish})'\n            errors.append({'file': f.name, 'stage': 'vllm-fallback', 'error': f'{reason}; using original'})\n            new_text = raw\n            cache_path.write_text(new_text, encoding='utf-8')\n            cache_path.with_suffix('.fallback').touch()\n            cached = False\n        else:\n            cache_path.write_text(new_text, encoding='utf-8')\n            cached = False\n    body = new_text.encode('utf-8')\n    key = f'{folder}/{f.name}'\n    try:\n        status = s3_put(key, body, 'text/plain; charset=utf-8')\n        refactored.append({'key': key, 'size': len(body), 'cached': cached, 'status': status})\n        combined_parts.append(new_text)\n    except Exception as e:\n        errors.append({'file': f.name, 'stage': 's3', 'error': f'{type(e).__name__}: {e}'})\n\nif combined_parts:\n    combined_text = ''\n    for part in combined_parts:\n        lines = part.split('\\n', 1)\n        head = lines[0].lstrip('# ').strip() if lines else ''\n        body_text = lines[1].strip() if len(lines) > 1 else ''\n        combined_text += f'\\n\\n====== {head} ======\\n\\n{body_text}\\n'\n    combined_filename = f'{slug or folder}_full.txt'\n    body = combined_text.encode('utf-8')\n    key = f'{folder}/{combined_filename}'\n    try:\n        status = s3_put(key, body, 'text/plain; charset=utf-8')\n        refactored.append({'key': key, 'size': len(body), 'combined': True, 'status': status})\n    except Exception as e:\n        errors.append({'file': combined_filename, 'stage': 's3', 'error': f'{type(e).__name__}: {e}'})\n\nreturn [{\n    'json': {\n        'success': len(errors) == 0 and len(refactored) > 0,\n        'folder': folder,\n        'bucket': bucket,\n        'model': model,\n        'refactored_count': len(refactored),\n        'failed_count': len(errors),\n        'refactored': refactored,\n        'errors': errors,\n    }\n}]\n"
+      },
+      "id": "refactor-1",
+      "name": "Refactor with vLLM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Params": {
+      "main": [
+        [
+          {
+            "node": "Run Crawler (Python)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Crawler (Python)": {
+      "main": [
+        [
+          {
+            "node": "Upload to MinIO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to MinIO": {
+      "main": [
+        [
+          {
+            "node": "Refactor with vLLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

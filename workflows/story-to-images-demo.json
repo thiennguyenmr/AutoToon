@@ -1,0 +1,188 @@
+{
+  "id": "story-to-images-demo",
+  "name": "Story to Images (FLUX) — demo",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trig-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "slug",
+              "value": "tro-ve-tu-do",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "chapter_file",
+              "value": "001-chng-1.txt",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "scene_count",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "style",
+              "value": "anime style, soft pastel colors, cinematic lighting, detailed face",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import os, sys, json, urllib.request, time, uuid, urllib.parse, hmac, hashlib, datetime, re\nfrom pathlib import Path\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nslug = p.get('slug', 'tro-ve-tu-do')\nchapter_file = p.get('chapter_file', '001-chng-1.txt')\nscene_count = int(p.get('scene_count') or 5)\nstyle_modifier = p.get('style', 'anime style, soft pastel colors, cinematic lighting, detailed face')\n\nchapter_path = Path('/data/crawl-output') / slug / chapter_file\ntext = chapter_path.read_text(encoding='utf-8')\n\n# ── 1. Try to fetch character bible manifest from MinIO ──────────────\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket = 'mottruyen-characters'\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_sign_get(key, target_bucket=bucket):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(b'').hexdigest()\n    canonical_uri = '/' + target_bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'GET\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    return urllib.request.Request(url, method='GET', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash, 'Authorization': auth\n    })\n\nbible = None\nchar_to_ref = {}\nchar_to_appearance = {}\ntry:\n    rq = s3_sign_get(f'{slug}/manifest.json')\n    with urllib.request.urlopen(rq, timeout=10) as r:\n        bible = json.loads(r.read())\n    for c in bible.get('characters', []):\n        nm = c.get('name')\n        rin = c.get('ref_input_name')\n        if nm and rin:\n            char_to_ref[nm] = rin\n            char_to_appearance[nm] = c.get('portrait_prompt', '')\nexcept Exception as e:\n    bible = None\n\n# ── 2. Build prompt ─ if bible present, give vLLM the character roster ──\nroster = ''\nif bible:\n    roster = '\\n\\nDANH SÁCH NHÂN VẬT CỦA TRUYỆN (dùng đúng tên này khi trích scene):\\n'\n    for c in bible.get('characters', []):\n        roster += f\"- {c['name']} ({c.get('gender')}, {c.get('role')}): {c.get('portrait_prompt','')[:200]}\\n\"\n\nprompt = text + roster + f'''\n\n═══════════════════════════════════════════════════════\nNHIỆM VỤ: Phân tích chương trên + trả về CHÍNH XÁC một JSON object.\n═══════════════════════════════════════════════════════\n\nYÊU CẦU:\n- Trích {scene_count} scenes theo thứ tự xuất hiện\n- characters_present phải dùng ĐÚNG tên trong DANH SÁCH NHÂN VẬT (nếu có) — không tự đổi tên, không dịch\n- image_prompt MUST reference characters BY NAME (gọi đúng tên đã trong roster). Tuyệt đối không hallucinate character.\n- KHÔNG đưa tên gia đình (Hà gia, Trương phủ) vào characters list\n\nĐỊNH DẠNG JSON:\n{{\n  \"story_meta\": {{\"era\":\"ancient_chinese|modern|...\",\"setting\":\"<English short>\",\"genre\":\"...\"}},\n  \"scenes\": [\n    {{\"scene\":1,\"characters_present\":[\"<exact name from roster>\"],\n      \"image_prompt\":\"<English 50-80w. Reference characters BY EXACT NAME. Include era + setting + action + lighting + mood.>\",\n      \"narration\":\"<1-2 câu Tiếng Việt với đại từ giới tính đúng>\"}}\n  ]\n}}\n\nCHỈ trả về JSON object.'''\n\nbody = json.dumps({\n    'model': 'gpt-oss-20b',\n    'messages': [{'role': 'user', 'content': prompt}],\n    'temperature': 0.1, 'max_tokens': 16000,\n    'chat_template_kwargs': {'reasoning_effort': 'medium'}\n}).encode()\nreq = urllib.request.Request('http://vllm:8000/v1/chat/completions',\n    data=body, headers={'Content-Type':'application/json','Authorization':'Bearer vllm-local'})\nwith urllib.request.urlopen(req, timeout=600) as r:\n    d = json.loads(r.read())\ncontent = d['choices'][0]['message'].get('content') or ''\nstart = content.find('{'); end = content.rfind('}')\nif start < 0 or end < 0:\n    raise ValueError(f'No JSON: {content[:300]}')\nparsed = json.loads(content[start:end+1])\n\nscenes = parsed.get('scenes', [])\nmeta = parsed.get('story_meta', {})\n\nout = []\nfor s in scenes[:scene_count]:\n    chars_in_scene = s.get('characters_present', [])\n    refs_for_scene = []\n    for nm in chars_in_scene[:3]:  # cap 3 refs per scene (Kontext quality drops with more)\n        if nm in char_to_ref:\n            refs_for_scene.append({'name': nm, 'ref_input_name': char_to_ref[nm], 'appearance': char_to_appearance.get(nm, '')})\n    out.append({'json': {\n        'slug': slug,\n        'chapter_file': chapter_file,\n        'chapter_base': chapter_file.replace('.txt',''),\n        'scene_index': s.get('scene'),\n        'image_prompt': style_modifier + ', ' + s.get('image_prompt', ''),\n        'narration': s.get('narration', ''),\n        'characters_present': chars_in_scene,\n        'refs_for_scene': refs_for_scene,\n        'has_bible': bible is not None,\n        'total_scenes': len(scenes),\n        'story_meta': meta,\n    }})\nreturn out\n"
+      },
+      "id": "extract-1",
+      "name": "Analyze Story + Extract Scenes (vLLM)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-1",
+      "name": "Loop Over Scenes",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForEachItem",
+        "pythonCode": "import json, urllib.request, time, uuid, os, hmac, hashlib, datetime, urllib.parse\nfrom urllib.parse import urlparse\n\np = _item['json']\nrefs = p.get('refs_for_scene') or []\n\ndef build_kontext_workflow_multi(ref_names, scene_prompt, save_prefix, seed=42):\n    \"\"\"FLUX Kontext with chained ReferenceLatent for each character ref.\"\"\"\n    wf = {\n        \"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"flux1-dev-kontext_fp8_scaled.safetensors\", \"weight_dtype\": \"default\"}},\n        \"2\": {\"class_type\": \"DualCLIPLoader\", \"inputs\": {\"clip_name1\": \"clip_l.safetensors\", \"clip_name2\": \"t5xxl_fp16.safetensors\", \"type\": \"flux\", \"device\": \"default\"}},\n        \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}},\n        \"20\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": scene_prompt}},\n    }\n    last_cond_node = \"20\"\n    last_ref_latent_id = None\n    for i, ref_name in enumerate(ref_names):\n        load_id = f\"l{i}\"\n        scale_id = f\"s{i}\"\n        enc_id = f\"e{i}\"\n        ref_id = f\"r{i}\"\n        wf[load_id] = {\"class_type\": \"LoadImage\", \"inputs\": {\"image\": ref_name}}\n        wf[scale_id] = {\"class_type\": \"FluxKontextImageScale\", \"inputs\": {\"image\": [load_id, 0]}}\n        wf[enc_id] = {\"class_type\": \"VAEEncode\", \"inputs\": {\"pixels\": [scale_id, 0], \"vae\": [\"3\", 0]}}\n        wf[ref_id] = {\"class_type\": \"ReferenceLatent\", \"inputs\": {\"conditioning\": [last_cond_node, 0], \"latent\": [enc_id, 0]}}\n        last_cond_node = ref_id\n        last_ref_latent_id = enc_id  # use last encoded latent as KSampler starting latent\n    wf[\"22\"] = {\"class_type\": \"FluxGuidance\", \"inputs\": {\"conditioning\": [last_cond_node, 0], \"guidance\": 2.5}}\n    wf[\"23\"] = {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"20\", 0]}}\n    wf[\"30\"] = {\"class_type\": \"KSampler\", \"inputs\": {\n        \"model\": [\"1\", 0], \"positive\": [\"22\", 0], \"negative\": [\"23\", 0],\n        \"latent_image\": [last_ref_latent_id, 0], \"seed\": seed, \"steps\": 20,\n        \"cfg\": 1.0, \"sampler_name\": \"euler\", \"scheduler\": \"normal\", \"denoise\": 1.0\n    }}\n    wf[\"40\"] = {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"30\", 0], \"vae\": [\"3\", 0]}}\n    wf[\"50\"] = {\"class_type\": \"SaveImage\", \"inputs\": {\"images\": [\"40\", 0], \"filename_prefix\": save_prefix}}\n    return wf\n\ndef build_flux_workflow(prompt, save_prefix, width=1248, height=720, seed=42):\n    return {\n        \"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"flux1-dev.safetensors\", \"weight_dtype\": \"default\"}},\n        \"2\": {\"class_type\": \"DualCLIPLoader\", \"inputs\": {\"clip_name1\": \"clip_l.safetensors\", \"clip_name2\": \"t5xxl_fp16.safetensors\", \"type\": \"flux\", \"device\": \"default\"}},\n        \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}},\n        \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": prompt}},\n        \"5\": {\"class_type\": \"FluxGuidance\", \"inputs\": {\"conditioning\": [\"4\", 0], \"guidance\": 3.5}},\n        \"6\": {\"class_type\": \"EmptyLatentImage\", \"inputs\": {\"width\": width, \"height\": height, \"batch_size\": 1}},\n        \"7\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}},\n        \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"model\": [\"1\", 0], \"positive\": [\"5\", 0], \"negative\": [\"7\", 0], \"latent_image\": [\"6\", 0], \"seed\": seed, \"steps\": 20, \"cfg\": 1.0, \"sampler_name\": \"euler\", \"scheduler\": \"normal\", \"denoise\": 1.0}},\n        \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}},\n        \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"images\": [\"9\", 0], \"filename_prefix\": save_prefix}}\n    }\n\nseed = int(p.get('scene_index', 1)) * 1000 + 42\nsave_prefix = f\"story/{p['slug']}/{p['chapter_base']}/scene-{p['scene_index']:02d}\"\n\nif refs:\n    # Build a strong scene prompt with character anchors\n    char_anchors = '. '.join([f\"{r['name']}: {r['appearance'][:200]}\" for r in refs])\n    full_prompt = f\"Same characters as in the reference images. Scene: {p['image_prompt']}. Characters: {char_anchors}\"\n    ref_names = [r['ref_input_name'] for r in refs]\n    wf_data = build_kontext_workflow_multi(ref_names, full_prompt, save_prefix, seed=seed)\n    method = f'kontext({len(refs)})'\nelse:\n    wf_data = build_flux_workflow(p['image_prompt'], save_prefix, seed=seed)\n    method = 'flux_dev'\n\nclient_id = str(uuid.uuid4())\nbody = json.dumps({\"prompt\": wf_data, \"client_id\": client_id}).encode()\nreq = urllib.request.Request(\"http://comfyui:8188/prompt\", data=body, headers={\"Content-Type\":\"application/json\"})\nwith urllib.request.urlopen(req, timeout=30) as r:\n    resp = json.loads(r.read())\nprompt_id = resp.get(\"prompt_id\")\nif not prompt_id:\n    raise RuntimeError(f'no prompt_id: {resp}')\n\ndeadline = time.time() + 600\nimg_filename = None; img_subfolder = \"\"; img_bytes = None\nwhile time.time() < deadline:\n    time.sleep(2)\n    with urllib.request.urlopen(f\"http://comfyui:8188/history/{prompt_id}\", timeout=10) as r:\n        h = json.loads(r.read())\n    if prompt_id in h:\n        st = h[prompt_id].get('status', {}).get('status_str')\n        if st == 'error':\n            for m in h[prompt_id]['status'].get('messages', []):\n                if isinstance(m, list) and m[0] == 'execution_error':\n                    raise RuntimeError(f\"ComfyUI error scene {p['scene_index']}: {m[1].get('exception_message','')[:200]}\")\n        for node_id, out in h[prompt_id].get(\"outputs\", {}).items():\n            if \"images\" in out:\n                img_filename = out[\"images\"][0][\"filename\"]\n                img_subfolder = out[\"images\"][0].get(\"subfolder\", \"\")\n                break\n        if img_filename:\n            url = f\"http://comfyui:8188/view?filename={urllib.parse.quote(img_filename)}&subfolder={urllib.parse.quote(img_subfolder)}&type=output\"\n            with urllib.request.urlopen(url, timeout=60) as r:\n                img_bytes = r.read()\n            break\nif not img_bytes:\n    raise RuntimeError(f'TIMEOUT scene {p[\"scene_index\"]}')\n\n# Upload to ComfyUI input/ for Wan I2V downstream\nboundary = '----comfyform' + uuid.uuid4().hex\ninput_filename = f\"flux_{p['slug']}_{p['chapter_base']}_scene-{p['scene_index']:02d}.png\"\nmp_body = (\n    f'--{boundary}\\r\\nContent-Disposition: form-data; name=\"image\"; filename=\"{input_filename}\"\\r\\n'\n    f'Content-Type: image/png\\r\\n\\r\\n'\n).encode() + img_bytes + (\n    f'\\r\\n--{boundary}\\r\\nContent-Disposition: form-data; name=\"overwrite\"\\r\\n\\r\\ntrue\\r\\n--{boundary}--\\r\\n'\n).encode()\nureq = urllib.request.Request('http://comfyui:8188/upload/image', data=mp_body,\n    headers={'Content-Type': f'multipart/form-data; boundary={boundary}'})\nwith urllib.request.urlopen(ureq, timeout=60) as r:\n    upload_resp = json.loads(r.read())\ninput_name_in_comfyui = upload_resp.get('name')\n\n# Upload to MinIO\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket = 'mottruyen-images'\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_put(key, body, content_type, target_bucket=bucket):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(body).hexdigest()\n    canonical_uri = '/' + target_bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    req = urllib.request.Request(url, data=body, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(req, timeout=60) as resp:\n        return resp.status\n\nkey = f\"{p['slug']}/{p['chapter_base']}/scene-{int(p['scene_index']):02d}.png\"\ns3_put(key, img_bytes, 'image/png')\n\nout = dict(p)\nout['comfyui_input_name'] = input_name_in_comfyui\nout['image_minio_key'] = f'{bucket}/{key}'\nout['gen_method'] = method\nreturn out\n"
+      },
+      "id": "gen-1",
+      "name": "Generate Image (FLUX)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForEachItem",
+        "pythonCode": "import json, urllib.request, time, uuid, os, hmac, hashlib, datetime, urllib.parse\nfrom urllib.parse import urlparse\n\np = _item['json']\ninput_image = p['comfyui_input_name']\n\ndef build_wan_i2v_workflow(image_name, prompt, neg_prompt, seed, width=832, height=480, length=81):\n    return {\n        \"10\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"wan2.2_i2v_high_noise_14B_fp16.safetensors\", \"weight_dtype\": \"default\"}},\n        \"11\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"wan2.2_i2v_low_noise_14B_fp16.safetensors\", \"weight_dtype\": \"default\"}},\n        \"12\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"model\": [\"10\", 0], \"lora_name\": \"wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors\", \"strength_model\": 1.0}},\n        \"13\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"model\": [\"11\", 0], \"lora_name\": \"wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors\", \"strength_model\": 1.0}},\n        \"14\": {\"class_type\": \"ModelSamplingSD3\", \"inputs\": {\"model\": [\"12\", 0], \"shift\": 8.0}},\n        \"15\": {\"class_type\": \"ModelSamplingSD3\", \"inputs\": {\"model\": [\"13\", 0], \"shift\": 8.0}},\n        \"20\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"umt5_xxl_fp8_e4m3fn_scaled.safetensors\", \"type\": \"wan\", \"device\": \"default\"}},\n        \"21\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"20\", 0], \"text\": prompt}},\n        \"22\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"20\", 0], \"text\": neg_prompt}},\n        \"30\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"wan_2.1_vae.safetensors\"}},\n        \"40\": {\"class_type\": \"LoadImage\", \"inputs\": {\"image\": image_name}},\n        \"42\": {\"class_type\": \"ImageScale\", \"inputs\": {\"image\": [\"40\", 0], \"upscale_method\": \"lanczos\", \"width\": width, \"height\": height, \"crop\": \"center\"}},\n        \"41\": {\"class_type\": \"WanImageToVideo\", \"inputs\": {\n            \"positive\": [\"21\", 0], \"negative\": [\"22\", 0], \"vae\": [\"30\", 0],\n            \"width\": width, \"height\": height, \"length\": length, \"batch_size\": 1,\n            \"start_image\": [\"42\", 0]\n        }},\n        \"50\": {\"class_type\": \"KSamplerAdvanced\", \"inputs\": {\n            \"model\": [\"14\", 0], \"add_noise\": \"enable\", \"noise_seed\": seed,\n            \"steps\": 4, \"cfg\": 1.0, \"sampler_name\": \"euler\", \"scheduler\": \"simple\",\n            \"positive\": [\"41\", 0], \"negative\": [\"41\", 1], \"latent_image\": [\"41\", 2],\n            \"start_at_step\": 0, \"end_at_step\": 2, \"return_with_leftover_noise\": \"enable\"\n        }},\n        \"51\": {\"class_type\": \"KSamplerAdvanced\", \"inputs\": {\n            \"model\": [\"15\", 0], \"add_noise\": \"disable\", \"noise_seed\": seed,\n            \"steps\": 4, \"cfg\": 1.0, \"sampler_name\": \"euler\", \"scheduler\": \"simple\",\n            \"positive\": [\"41\", 0], \"negative\": [\"41\", 1], \"latent_image\": [\"50\", 0],\n            \"start_at_step\": 2, \"end_at_step\": 1000, \"return_with_leftover_noise\": \"disable\"\n        }},\n        \"60\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"51\", 0], \"vae\": [\"30\", 0]}},\n        \"61\": {\"class_type\": \"CreateVideo\", \"inputs\": {\"images\": [\"60\", 0], \"fps\": 16}},\n        \"62\": {\"class_type\": \"SaveVideo\", \"inputs\": {\n            \"video\": [\"61\", 0],\n            \"filename_prefix\": f\"video/{p['slug']}/{p['chapter_base']}/scene-{p['scene_index']:02d}\",\n            \"format\": \"mp4\", \"codec\": \"h264\"\n        }}\n    }\n\nmotion_prompt = p['image_prompt'] + \", smooth gentle camera movement, subtle character motion, cinematic\"\nneg_prompt = \"low quality, blurry, watermark, distorted, static, frozen\"\nseed = int(p.get('scene_index', 1)) * 7919 + 1234\n\nwf = build_wan_i2v_workflow(input_image, motion_prompt, neg_prompt, seed=seed)\nclient_id = str(uuid.uuid4())\nbody = json.dumps({\"prompt\": wf, \"client_id\": client_id}).encode()\nreq = urllib.request.Request(\"http://comfyui:8188/prompt\", data=body, headers={\"Content-Type\":\"application/json\"})\nwith urllib.request.urlopen(req, timeout=30) as r:\n    resp = json.loads(r.read())\nprompt_id = resp.get(\"prompt_id\")\nif not prompt_id:\n    raise RuntimeError(f'no prompt_id: {resp}')\n\ndeadline = time.time() + 1500\nvideo_filename = None; video_subfolder = \"\"; video_bytes = None\nwhile time.time() < deadline:\n    time.sleep(5)\n    with urllib.request.urlopen(f\"http://comfyui:8188/history/{prompt_id}\", timeout=10) as r:\n        h = json.loads(r.read())\n    if prompt_id in h:\n        outputs = h[prompt_id].get(\"outputs\", {})\n        status = h[prompt_id].get(\"status\", {})\n        if status.get(\"status_str\") == \"error\":\n            msgs = status.get(\"messages\", [])\n            err = ''\n            for m in msgs:\n                if isinstance(m, list) and m[0] == \"execution_error\":\n                    err = m[1].get(\"exception_message\", \"\")\n            raise RuntimeError(f\"ComfyUI error scene {p['scene_index']}: {err[:200]}\")\n        for node_id, out in outputs.items():\n            for key in ('videos', 'gifs', 'images'):\n                if key in out and out[key]:\n                    item = out[key][0]\n                    fname = item.get(\"filename\", \"\")\n                    if fname.endswith('.mp4') or key in ('videos','gifs'):\n                        video_filename = fname\n                        video_subfolder = item.get(\"subfolder\", \"\")\n                        break\n            if video_filename: break\n        if video_filename:\n            url = f\"http://comfyui:8188/view?filename={urllib.parse.quote(video_filename)}&subfolder={urllib.parse.quote(video_subfolder)}&type=output\"\n            with urllib.request.urlopen(url, timeout=120) as r:\n                video_bytes = r.read()\n            break\nif not video_bytes:\n    raise RuntimeError(f\"TIMEOUT video gen scene {p['scene_index']}\")\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket = 'mottruyen-videos'\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_put(key, body, content_type, target_bucket=bucket):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(body).hexdigest()\n    canonical_uri = '/' + target_bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    req = urllib.request.Request(url, data=body, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(req, timeout=120) as resp:\n        return resp.status\n\nkey = f\"{p['slug']}/{p['chapter_base']}/scene-{int(p['scene_index']):02d}.mp4\"\nstatus = s3_put(key, video_bytes, 'video/mp4')\n\nreturn {\n    'success': True,\n    'slug': p['slug'],\n    'chapter_base': p['chapter_base'],\n    'scene_index': p['scene_index'],\n    'video_size': len(video_bytes),\n    'video_minio_key': f'{bucket}/{key}',\n    'image_minio_key': p.get('image_minio_key'),\n    'narration': p.get('narration'),\n}\n"
+      },
+      "id": "vid-1",
+      "name": "Generate Video (Wan I2V)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Params": {
+      "main": [
+        [
+          {
+            "node": "Analyze Story + Extract Scenes (vLLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Story + Extract Scenes (vLLM)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Scenes": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Generate Image (FLUX)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Image (FLUX)": {
+      "main": [
+        [
+          {
+            "node": "Generate Video (Wan I2V)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video (Wan I2V)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

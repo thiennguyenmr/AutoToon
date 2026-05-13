@@ -1,0 +1,45 @@
+{
+  "id": "test-python-001",
+  "name": "Test Python Script",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "command": "python3 -c \"\nimport sys\nimport json\nimport platform\nimport datetime\n\nresult = {\n    'status': 'ok',\n    'python_version': platform.python_version(),\n    'platform': platform.system(),\n    'timestamp': datetime.datetime.now().isoformat(),\n    'stdlib_test': {\n        'json': json.dumps({'hello': 'world'}),\n        'list_comprehension': [x * x for x in range(5)],\n        'dict_ops': {k: v for k, v in {'a': 1, 'b': 2, 'c': 3}.items() if v > 1}\n    }\n}\n\nprint(json.dumps(result))\n\""
+      },
+      "id": "python-1",
+      "name": "Run Python Script",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout.trim();\nconst result = JSON.parse(raw);\n\nif (result.status !== 'ok') {\n  throw new Error('Python script failed');\n}\n\nreturn [{\n  json: {\n    message: `Python ${result.python_version} is working on ${result.platform}`,\n    timestamp: result.timestamp,\n    details: result.stdlib_test\n  }\n}];"
+      },
+      "id": "parse-1",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Run Python Script", "type": "main", "index": 0 }]]
+    },
+    "Run Python Script": {
+      "main": [[{ "node": "Parse Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "providers": {
+    "vllm": {
+      "baseUrl": "http://vllm:8000/v1",
+      "apiKey": "VLLM_API_KEY",
+      "api": "openai-responses",
+      "models": [
+        {
+          "id": "gpt-oss-20b",
+          "name": "GPT-OSS 20B",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "api": "openai-responses"
+        }
+      ]
+    }
+  }
+}

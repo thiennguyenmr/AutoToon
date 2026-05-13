@@ -1,0 +1,78 @@
+{
+  "id": "build-story-audio",
+  "name": "Build Story Audio (per slug)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trig-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"id": "p1", "name": "slug", "value": "a-ham", "type": "string"},
+            {"id": "p2", "name": "source_bucket", "value": "mottruyen-refactored", "type": "string"},
+            {"id": "p3", "name": "audio_bucket", "value": "mottruyen-audio", "type": "string"},
+            {"id": "p4", "name": "chunk_chars", "value": 1500, "type": "number"},
+            {"id": "p5", "name": "ref_audio", "value": "", "type": "string"},
+            {"id": "p6", "name": "ref_text", "value": "", "type": "string"},
+            {"id": "p7", "name": "voice_design_json", "value": "{\"gender\":\"female\",\"age\":\"adult\",\"pitch\":\"medium\",\"style\":\"narration\"}", "type": "string"},
+            {"id": "p8", "name": "seed", "value": 42, "type": "number"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, re, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nslug = p.get('slug', 'a-ham')\nsource_bucket = p.get('source_bucket', 'mottruyen-refactored')\naudio_bucket = p.get('audio_bucket', 'mottruyen-audio')\nchunk_chars = int(p.get('chunk_chars', 1500))\nref_audio = (p.get('ref_audio') or '').strip()\nref_text = (p.get('ref_text') or '').strip()\nvoice_design_json = (p.get('voice_design_json') or '').strip()\nseed = int(p.get('seed', 42))\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_get(bucket, key):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    empty_hash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{empty_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'GET\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{empty_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    rq = urllib.request.Request(f'{endpoint}{canonical_uri}', headers={'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': empty_hash, 'Authorization': auth})\n    with urllib.request.urlopen(rq, timeout=120) as resp:\n        return resp.read().decode('utf-8')\n\nkey = f'{slug}/{slug}_full.txt'\ntext = s3_get(source_bucket, key)\n\n# Normalize whitespace, then chunk by paragraph then by length\nparagraphs = [pp.strip() for pp in re.split(r'\\n\\s*\\n', text) if pp.strip()]\n\nchunks = []\nbuf = ''\nfor para in paragraphs:\n    if len(buf) + len(para) + 2 <= chunk_chars:\n        buf = (buf + '\\n\\n' + para).strip()\n    else:\n        if buf: chunks.append(buf)\n        # if single paragraph longer than chunk_chars, split by sentence\n        if len(para) > chunk_chars:\n            sentences = re.split(r'(?<=[\\.\\!\\?\\u2026])\\s+', para)\n            cur = ''\n            for s in sentences:\n                if len(cur) + len(s) + 1 <= chunk_chars:\n                    cur = (cur + ' ' + s).strip()\n                else:\n                    if cur: chunks.append(cur)\n                    cur = s\n            if cur: chunks.append(cur)\n            buf = ''\n        else:\n            buf = para\nif buf: chunks.append(buf)\n\ntry:\n    voice_design = json.loads(voice_design_json) if voice_design_json else None\nexcept Exception:\n    voice_design = None\n\nif not chunks:\n    return [{'json': {'status': 'no_text', 'slug': slug}}]\n\nreturn [\n    {'json': {\n        'slug': slug,\n        'audio_bucket': audio_bucket,\n        'chunk_id': i + 1,\n        'total_chunks': len(chunks),\n        'text': c,\n        'ref_audio': ref_audio or None,\n        'ref_text': ref_text or None,\n        'voice_design': voice_design,\n        'seed': seed + i,\n    }} for i, c in enumerate(chunks)\n]"
+      },
+      "id": "node-chunks",
+      "name": "Build TTS Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\nOMNIVOICE_URL = os.environ.get('OMNIVOICE_URL', 'http://omnivoice:8000/tts')\n\ndef s3_put(bucket, key, data, content_type='application/octet-stream'):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(data).hexdigest()\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    rq = urllib.request.Request(f'{endpoint}{canonical_uri}', data=data, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(rq, timeout=180) as resp:\n        return resp.status\n\ndef tts_call(payload, timeout=900):\n    body = json.dumps(payload).encode()\n    req = urllib.request.Request(OMNIVOICE_URL, data=body, headers={'Content-Type': 'application/json'})\n    with urllib.request.urlopen(req, timeout=timeout) as r:\n        return r.read(), r.headers.get('X-Sample-Rate')\n\noutput = []\nfor it in _items:\n    chunk = dict(it['json'])\n    slug = chunk.get('slug', 'unknown')\n    cid = int(chunk.get('chunk_id', 0))\n    total = int(chunk.get('total_chunks', 0))\n    bucket = chunk.get('audio_bucket', 'mottruyen-audio')\n    payload = {'text': chunk.get('text', '')}\n    if chunk.get('ref_audio'): payload['ref_audio'] = chunk['ref_audio']\n    if chunk.get('ref_text'): payload['ref_text'] = chunk['ref_text']\n    if chunk.get('voice_design'): payload['voice_design'] = chunk['voice_design']\n    if chunk.get('seed') is not None: payload['seed'] = chunk['seed']\n    try:\n        wav_bytes, sr = tts_call(payload)\n        key = f'{slug}/chunk_{cid:04d}.wav'\n        s3_put(bucket, key, wav_bytes, 'audio/wav')\n        chunk['audio_key'] = f'{bucket}/{key}'\n        chunk['audio_size'] = len(wav_bytes)\n        chunk['sample_rate'] = sr\n    except Exception as e:\n        chunk['audio_error'] = str(e)\n    finally:\n        chunk.pop('text', None)  # don't carry text through downstream\n    output.append({'json': chunk})\n\nreturn output"
+      },
+      "id": "node-tts",
+      "name": "Synthesize Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_put(bucket, key, data, content_type='application/octet-stream'):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(data).hexdigest()\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    rq = urllib.request.Request(f'{endpoint}{canonical_uri}', data=data, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(rq, timeout=120) as resp:\n        return resp.status\n\nslug = None\nbucket = None\nclips = []\nerrors = []\nfor it in _items:\n    j = it['json']\n    slug = j.get('slug') or slug\n    bucket = j.get('audio_bucket') or bucket\n    if j.get('audio_key'):\n        clips.append({'chunk_id': j.get('chunk_id'), 'key': j['audio_key'], 'size': j.get('audio_size'), 'sr': j.get('sample_rate')})\n    if j.get('audio_error'):\n        errors.append({'chunk_id': j.get('chunk_id'), 'error': j['audio_error']})\n\nif not clips or not slug:\n    return [{'json': {'status': 'no_clips', 'errors': errors}}]\n\nclips.sort(key=lambda x: int(x['chunk_id'] or 0))\nconcat_lines = [f\"file '{c['key'].split('/')[-1]}'\" for c in clips]\nconcat_txt = '\\n'.join(concat_lines) + '\\n'\nbucket = bucket or 'mottruyen-audio'\ns3_put(bucket, f'{slug}/concat.txt', concat_txt.encode(), 'text/plain')\n\nmanifest = {\n    'slug': slug,\n    'bucket': bucket,\n    'chunk_count': len(clips),\n    'error_count': len(errors),\n    'clips': clips,\n    'errors': errors,\n    'concat_cmd_local': f'ffmpeg -f concat -safe 0 -i concat.txt -c copy {slug}.wav',\n    'concat_cmd_mp3': f'ffmpeg -f concat -safe 0 -i concat.txt -c:a libmp3lame -b:a 128k {slug}.mp3',\n}\ns3_put(bucket, f'{slug}/manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2).encode(), 'application/json')\n\nreturn [{'json': manifest}]"
+      },
+      "id": "node-manifest",
+      "name": "Build Audio Manifest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {"main": [[{"node": "Set Params", "type": "main", "index": 0}]]},
+    "Set Params": {"main": [[{"node": "Build TTS Chunks", "type": "main", "index": 0}]]},
+    "Build TTS Chunks": {"main": [[{"node": "Synthesize Audio", "type": "main", "index": 0}]]},
+    "Synthesize Audio": {"main": [[{"node": "Build Audio Manifest", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

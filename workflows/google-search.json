@@ -1,0 +1,298 @@
+{
+  "id": "google-search-001",
+  "name": "Google Search - AI Overview & Top 2 Page Content (SerpAPI)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "gs-manual-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [112, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set the keyword to search here\nconst keyword = 'mua bàn gỗ';\nreturn [{ json: { keyword } }];"
+      },
+      "id": "gs-keyword-1",
+      "name": "Set Keyword",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 400]
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{ encodeURIComponent($json.keyword) }}&hl=vi&gl=vn&num=5&api_key=419757ddf943fa3de2cb5f601c072043b5ed35ddb1271caef7df4eff1e49dfca",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "gs-serpapi-1",
+      "name": "SerpAPI Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [544, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst keyword = $('Set Keyword').first().json.keyword;\n\n// --- Search ID from SerpAPI ---\nconst searchId = (data.search_metadata && data.search_metadata.id) || ('local_' + Date.now());\n\n// --- AI Overview ---\nlet aiOverview = null;\nlet aiOverviewRefs = [];\nconst aio = data.ai_overview;\nif (aio) {\n  if (typeof aio === 'string') aiOverview = aio;\n  else if (aio.text_blocks) aiOverview = aio.text_blocks.map(b => b.snippet || b.text || '').join('\\n').trim();\n  else if (aio.text) aiOverview = aio.text;\n  else if (aio.snippet) aiOverview = aio.snippet;\n  const refs = aio.references || aio.sources || [];\n  aiOverviewRefs = refs.map(r => ({ title: r.title || '', url: r.link || r.url || '', snippet: r.snippet || '' }));\n}\nif (!aiOverview && data.answer_box) {\n  const ab = data.answer_box;\n  aiOverview = ab.answer || ab.snippet || ab.result || null;\n}\nif (!aiOverview && data.knowledge_graph && data.knowledge_graph.description) {\n  aiOverview = data.knowledge_graph.description;\n}\n\nconst knowledgeGraph = data.knowledge_graph || null;\nconst answerBox = data.answer_box || null;\nconst totalResults = data.search_information ? (data.search_information.total_results_text || String(data.search_information.total_results || '')) : null;\n\n// --- Top 5 organic results ---\nconst organic = data.organic_results || [];\nconst topResults = organic.slice(0, 5).map((r, i) => {\n  let domain = '';\n  try { domain = new URL(r.link).hostname; } catch(e) {}\n  return { position: r.position || (i + 1), title: r.title || '', url: r.link || '', snippet: r.snippet || '', display_url: r.displayed_link || '', domain };\n});\n\nconst url1 = topResults[0] ? topResults[0].url : '';\nconst url2 = topResults[1] ? topResults[1].url : '';\n\nreturn [{ json: {\n  search_id: searchId,\n  keyword,\n  ai_overview: aiOverview,\n  ai_overview_references: aiOverviewRefs,\n  knowledge_graph: knowledgeGraph,\n  answer_box: answerBox,\n  total_results: totalResults,\n  organic_results: topResults,\n  raw_response: data,\n  searched_at: new Date().toISOString(),\n  fetch_url_1: url1,\n  fetch_url_2: url2\n} }];"
+      },
+      "id": "gs-parse-1",
+      "name": "Extract Search Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [768, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchData = $input.first().json;\n\nreturn [{ json: {\n  search_id: searchData.search_id,\n  keyword: searchData.keyword,\n  ai_overview_text: searchData.ai_overview,\n  ai_overview_references: searchData.ai_overview_references,\n  knowledge_graph: searchData.knowledge_graph,\n  answer_box: searchData.answer_box,\n  searched_at: searchData.searched_at\n} }];"
+      },
+      "id": "gs-prep-aio",
+      "name": "Prepare AI Overview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, -16]
+    },
+    {
+      "parameters": {
+        "schema": "public",
+        "table": "ai_overview",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": ["id"],
+          "schema": [
+            {"id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "number", "canBeUsedToMatch": true, "removed": false},
+            {"id": "search_id", "displayName": "search_id", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "keyword", "displayName": "keyword", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "ai_overview_text", "displayName": "ai_overview_text", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "ai_overview_references", "displayName": "ai_overview_references", "required": false, "defaultMatch": false, "display": true, "type": "object", "canBeUsedToMatch": true, "removed": false},
+            {"id": "knowledge_graph", "displayName": "knowledge_graph", "required": false, "defaultMatch": false, "display": true, "type": "object", "canBeUsedToMatch": true, "removed": false},
+            {"id": "answer_box", "displayName": "answer_box", "required": false, "defaultMatch": false, "display": true, "type": "object", "canBeUsedToMatch": true, "removed": false},
+            {"id": "searched_at", "displayName": "searched_at", "required": false, "defaultMatch": false, "display": true, "type": "dateTime", "canBeUsedToMatch": true, "removed": false},
+            {"id": "created_at", "displayName": "created_at", "required": false, "defaultMatch": false, "display": true, "type": "dateTime", "canBeUsedToMatch": true, "removed": false}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "gs-save-aio",
+      "name": "Save AI Overview",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1264, -16],
+      "credentials": {
+        "postgres": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchData = $('Extract Search Data').first().json;\nconst searchId = searchData.search_id;\nconst organicResults = searchData.organic_results || [];\n\n// Output up to 5 items — one per organic result\nreturn organicResults.map(r => ({\n  json: {\n    search_id: searchId,\n    position: r.position,\n    title: r.title,\n    url: r.url,\n    snippet: r.snippet,\n    display_url: r.display_url,\n    domain: r.domain\n  }\n}));"
+      },
+      "id": "gs-prep-pageinfo",
+      "name": "Prepare Page Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 208]
+    },
+    {
+      "parameters": {
+        "schema": "public",
+        "table": "page_info",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": ["id"],
+          "schema": [
+            {"id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "number", "canBeUsedToMatch": true, "removed": false},
+            {"id": "search_id", "displayName": "search_id", "required": true, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "position", "displayName": "position", "required": true, "defaultMatch": false, "display": true, "type": "number", "canBeUsedToMatch": true, "removed": false},
+            {"id": "title", "displayName": "title", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "url", "displayName": "url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "snippet", "displayName": "snippet", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "display_url", "displayName": "display_url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "domain", "displayName": "domain", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "created_at", "displayName": "created_at", "required": false, "defaultMatch": false, "display": true, "type": "dateTime", "canBeUsedToMatch": true, "removed": false}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "gs-save-pageinfo",
+      "name": "Save Page Info",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1264, 208],
+      "credentials": {
+        "postgres": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Extract Search Data').first().json.fetch_url_1 }}",
+        "options": {
+          "browserWSEndpoint": "ws://chromium:3000",
+          "timeout": 30000,
+          "waitUntil": "networkidle2",
+          "stealth": true
+        }
+      },
+      "id": "gs-puppeteer-1",
+      "name": "Fetch Page 1",
+      "type": "n8n-nodes-puppeteer.puppeteer",
+      "typeVersion": 1,
+      "position": [1040, 480],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchData = $('Extract Search Data').first().json;\nconst html = $input.first().json.body || '';\nconst url = searchData.fetch_url_1;\nconst PAGE_NUMBER = 1;\n\nif (!html) return [{ json: { search_id: searchData.search_id, page_number: PAGE_NUMBER, url, title: '', title_length: 0, meta_description: '', meta_description_length: 0, meta_keywords: '', og_title: '', og_description: '', og_image: '', og_url: '', canonical_url: '', favicon: '', viewport: '', charset: '', robots_meta: '', h1_tags: '[]', h1_count: 0, h2_tags: '[]', h2_count: 0, h3_tags: '[]', h3_count: 0, total_links: 0, internal_links: 0, external_links: 0, total_images: 0, images_with_alt: 0, images_without_alt: 0, word_count: 0, content: '', links_json: '[]', images_json: '[]' } }];\n\nfunction getAttr(tag, attr) {\n  const re = new RegExp(attr + '=[\"\\']([^\"\\']*)[\"\\']', 'i');\n  const m = tag.match(re);\n  return m ? m[1] : null;\n}\nfunction matchAll(str, re) {\n  const results = []; let m;\n  while ((m = re.exec(str)) !== null) results.push(m);\n  return results;\n}\nfunction getMeta(name) {\n  const re = new RegExp('<meta[^>]*name=[\"\\']' + name + '[\"\\'][^>]*>', 'i');\n  const m = html.match(re);\n  return m ? (getAttr(m[0], 'content') || '') : '';\n}\nfunction getOg(prop) {\n  const re = new RegExp('<meta[^>]*property=[\"\\']' + prop + '[\"\\'][^>]*>', 'i');\n  const m = html.match(re);\n  return m ? (getAttr(m[0], 'content') || '') : '';\n}\nfunction getHeadings(tag) {\n  const re = new RegExp('<' + tag + '[^>]*>(.*?)<\\\\/' + tag + '>', 'gis');\n  return matchAll(html, re).map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(t => t);\n}\n\n// Title\nconst titleMatch = html.match(/<title[^>]*>(.*?)<\\/title>/is);\nconst title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n\n// Meta tags\nconst metaDesc = getMeta('description');\nconst metaKeywords = getMeta('keywords');\nconst viewport = getMeta('viewport');\nconst robots = getMeta('robots');\nconst ogTitle = getOg('og:title');\nconst ogDesc = getOg('og:description');\nconst ogImage = getOg('og:image');\nconst ogUrl = getOg('og:url');\n\n// Charset\nconst charsetMatch = html.match(/<meta[^>]*charset=[\"']?([^\"'\\\\s>]+)/i);\nconst charset = charsetMatch ? charsetMatch[1] : 'utf-8';\n\n// Canonical\nconst canonicalMatch = html.match(/<link[^>]*rel=[\"']canonical[\"'][^>]*href=[\"']([^\"']*)[\"']/i);\nconst canonical = canonicalMatch ? canonicalMatch[1] : '';\n\n// Favicon\nconst faviconMatch = html.match(/<link[^>]*rel=[\"'][^\"']*icon[^\"']*[\"'][^>]*href=[\"']([^\"']*)[\"']/i);\nconst favicon = faviconMatch ? faviconMatch[1] : '';\n\n// Headings\nconst h1 = getHeadings('h1');\nconst h2 = getHeadings('h2');\nconst h3 = getHeadings('h3');\n\n// Links - detect domain for internal/external\nlet domain = '';\ntry { domain = new URL(url).hostname; } catch(e) {}\nconst linkMatches = matchAll(html, /<a[^>]*href=[\"']([^\"']*)[\"']/gi);\nconst links = linkMatches.map(m => m[1]);\nconst intLinks = links.filter(l => l.startsWith('/') || l.includes(domain)).length;\n\n// Images\nconst imgTags = matchAll(html, /<img[^>]*>/gi);\nconst images = imgTags.map(m => getAttr(m[0], 'src')).filter(Boolean);\nconst imagesWithAlt = imgTags.filter(m => { const a = getAttr(m[0], 'alt'); return a && a.length > 0; }).length;\n\n// Body text & word count\nconst bodyMatch = html.match(/<body[^>]*>(.*)<\\/body>/is);\nlet bodyText = '';\nif (bodyMatch) {\n  bodyText = bodyMatch[1]\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/\\s+/g, ' ').trim();\n}\nconst wordCount = bodyText.split(/\\s+/).filter(w => w.length > 0).length;\n\nreturn [{ json: {\n  search_id: searchData.search_id,\n  page_number: PAGE_NUMBER,\n  url,\n  title,\n  title_length: title.length,\n  meta_description: metaDesc,\n  meta_description_length: metaDesc.length,\n  meta_keywords: metaKeywords,\n  og_title: ogTitle,\n  og_description: ogDesc,\n  og_image: ogImage,\n  og_url: ogUrl,\n  canonical_url: canonical,\n  favicon,\n  viewport,\n  charset,\n  robots_meta: robots,\n  h1_tags: JSON.stringify(h1),\n  h1_count: h1.length,\n  h2_tags: JSON.stringify(h2),\n  h2_count: h2.length,\n  h3_tags: JSON.stringify(h3),\n  h3_count: h3.length,\n  total_links: links.length,\n  internal_links: intLinks,\n  external_links: links.length - intLinks,\n  total_images: images.length,\n  images_with_alt: imagesWithAlt,\n  images_without_alt: images.length - imagesWithAlt,\n  word_count: wordCount,\n  content: bodyText.substring(0, 5000),\n  links_json: JSON.stringify(links.slice(0, 500)),\n  images_json: JSON.stringify(images.slice(0, 200))\n} }];"
+      },
+      "id": "gs-prep-page1",
+      "name": "Prepare Page 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1264, 480]
+    },
+    {
+      "parameters": {
+        "schema": "public",
+        "table": "page_content",
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "gs-save-page1",
+      "name": "Save Page 1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1488, 480],
+      "credentials": {
+        "postgres": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Extract Search Data').first().json.fetch_url_2 }}",
+        "options": {
+          "browserWSEndpoint": "ws://chromium:3000",
+          "timeout": 30000,
+          "waitUntil": "networkidle2",
+          "stealth": true
+        }
+      },
+      "id": "gs-puppeteer-2",
+      "name": "Fetch Page 2",
+      "type": "n8n-nodes-puppeteer.puppeteer",
+      "typeVersion": 1,
+      "position": [1040, 720],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchData = $('Extract Search Data').first().json;\nconst html = $input.first().json.body || '';\nconst url = searchData.fetch_url_2;\nconst PAGE_NUMBER = 2;\n\nif (!html) return [{ json: { search_id: searchData.search_id, page_number: PAGE_NUMBER, url, title: '', title_length: 0, meta_description: '', meta_description_length: 0, meta_keywords: '', og_title: '', og_description: '', og_image: '', og_url: '', canonical_url: '', favicon: '', viewport: '', charset: '', robots_meta: '', h1_tags: '[]', h1_count: 0, h2_tags: '[]', h2_count: 0, h3_tags: '[]', h3_count: 0, total_links: 0, internal_links: 0, external_links: 0, total_images: 0, images_with_alt: 0, images_without_alt: 0, word_count: 0, content: '', links_json: '[]', images_json: '[]' } }];\n\nfunction getAttr(tag, attr) {\n  const re = new RegExp(attr + '=[\"\\']([^\"\\']*)[\"\\']', 'i');\n  const m = tag.match(re);\n  return m ? m[1] : null;\n}\nfunction matchAll(str, re) {\n  const results = []; let m;\n  while ((m = re.exec(str)) !== null) results.push(m);\n  return results;\n}\nfunction getMeta(name) {\n  const re = new RegExp('<meta[^>]*name=[\"\\']' + name + '[\"\\'][^>]*>', 'i');\n  const m = html.match(re);\n  return m ? (getAttr(m[0], 'content') || '') : '';\n}\nfunction getOg(prop) {\n  const re = new RegExp('<meta[^>]*property=[\"\\']' + prop + '[\"\\'][^>]*>', 'i');\n  const m = html.match(re);\n  return m ? (getAttr(m[0], 'content') || '') : '';\n}\nfunction getHeadings(tag) {\n  const re = new RegExp('<' + tag + '[^>]*>(.*?)<\\\\/' + tag + '>', 'gis');\n  return matchAll(html, re).map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(t => t);\n}\n\n// Title\nconst titleMatch = html.match(/<title[^>]*>(.*?)<\\/title>/is);\nconst title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n\n// Meta tags\nconst metaDesc = getMeta('description');\nconst metaKeywords = getMeta('keywords');\nconst viewport = getMeta('viewport');\nconst robots = getMeta('robots');\nconst ogTitle = getOg('og:title');\nconst ogDesc = getOg('og:description');\nconst ogImage = getOg('og:image');\nconst ogUrl = getOg('og:url');\n\n// Charset\nconst charsetMatch = html.match(/<meta[^>]*charset=[\"']?([^\"'\\\\s>]+)/i);\nconst charset = charsetMatch ? charsetMatch[1] : 'utf-8';\n\n// Canonical\nconst canonicalMatch = html.match(/<link[^>]*rel=[\"']canonical[\"'][^>]*href=[\"']([^\"']*)[\"']/i);\nconst canonical = canonicalMatch ? canonicalMatch[1] : '';\n\n// Favicon\nconst faviconMatch = html.match(/<link[^>]*rel=[\"'][^\"']*icon[^\"']*[\"'][^>]*href=[\"']([^\"']*)[\"']/i);\nconst favicon = faviconMatch ? faviconMatch[1] : '';\n\n// Headings\nconst h1 = getHeadings('h1');\nconst h2 = getHeadings('h2');\nconst h3 = getHeadings('h3');\n\n// Links - detect domain for internal/external\nlet domain = '';\ntry { domain = new URL(url).hostname; } catch(e) {}\nconst linkMatches = matchAll(html, /<a[^>]*href=[\"']([^\"']*)[\"']/gi);\nconst links = linkMatches.map(m => m[1]);\nconst intLinks = links.filter(l => l.startsWith('/') || l.includes(domain)).length;\n\n// Images\nconst imgTags = matchAll(html, /<img[^>]*>/gi);\nconst images = imgTags.map(m => getAttr(m[0], 'src')).filter(Boolean);\nconst imagesWithAlt = imgTags.filter(m => { const a = getAttr(m[0], 'alt'); return a && a.length > 0; }).length;\n\n// Body text & word count\nconst bodyMatch = html.match(/<body[^>]*>(.*)<\\/body>/is);\nlet bodyText = '';\nif (bodyMatch) {\n  bodyText = bodyMatch[1]\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/\\s+/g, ' ').trim();\n}\nconst wordCount = bodyText.split(/\\s+/).filter(w => w.length > 0).length;\n\nreturn [{ json: {\n  search_id: searchData.search_id,\n  page_number: PAGE_NUMBER,\n  url,\n  title,\n  title_length: title.length,\n  meta_description: metaDesc,\n  meta_description_length: metaDesc.length,\n  meta_keywords: metaKeywords,\n  og_title: ogTitle,\n  og_description: ogDesc,\n  og_image: ogImage,\n  og_url: ogUrl,\n  canonical_url: canonical,\n  favicon,\n  viewport,\n  charset,\n  robots_meta: robots,\n  h1_tags: JSON.stringify(h1),\n  h1_count: h1.length,\n  h2_tags: JSON.stringify(h2),\n  h2_count: h2.length,\n  h3_tags: JSON.stringify(h3),\n  h3_count: h3.length,\n  total_links: links.length,\n  internal_links: intLinks,\n  external_links: links.length - intLinks,\n  total_images: images.length,\n  images_with_alt: imagesWithAlt,\n  images_without_alt: images.length - imagesWithAlt,\n  word_count: wordCount,\n  content: bodyText.substring(0, 5000),\n  links_json: JSON.stringify(links.slice(0, 500)),\n  images_json: JSON.stringify(images.slice(0, 200))\n} }];"
+      },
+      "id": "gs-prep-page2",
+      "name": "Prepare Page 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1264, 720]
+    },
+    {
+      "parameters": {
+        "schema": "public",
+        "table": "page_content",
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "gs-save-page2",
+      "name": "Save Page 2",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1488, 720],
+      "credentials": {
+        "postgres": {
+          "id": "zLDsozqYq10upJ0e",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{"node": "Set Keyword", "type": "main", "index": 0}]]
+    },
+    "Set Keyword": {
+      "main": [[{"node": "SerpAPI Search", "type": "main", "index": 0}]]
+    },
+    "SerpAPI Search": {
+      "main": [[{"node": "Extract Search Data", "type": "main", "index": 0}]]
+    },
+    "Extract Search Data": {
+      "main": [[
+        {"node": "Prepare AI Overview", "type": "main", "index": 0},
+        {"node": "Prepare Page Info", "type": "main", "index": 0},
+        {"node": "Fetch Page 1", "type": "main", "index": 0},
+        {"node": "Fetch Page 2", "type": "main", "index": 0}
+      ]]
+    },
+    "Prepare AI Overview": {
+      "main": [[{"node": "Save AI Overview", "type": "main", "index": 0}]]
+    },
+    "Save AI Overview": {
+      "main": [[]]
+    },
+    "Prepare Page Info": {
+      "main": [[{"node": "Save Page Info", "type": "main", "index": 0}]]
+    },
+    "Save Page Info": {
+      "main": [[]]
+    },
+    "Fetch Page 1": {
+      "main": [[{"node": "Prepare Page 1", "type": "main", "index": 0}]]
+    },
+    "Prepare Page 1": {
+      "main": [[{"node": "Save Page 1", "type": "main", "index": 0}]]
+    },
+    "Save Page 1": {
+      "main": [[]]
+    },
+    "Fetch Page 2": {
+      "main": [[{"node": "Prepare Page 2", "type": "main", "index": 0}]]
+    },
+    "Prepare Page 2": {
+      "main": [[{"node": "Save Page 2", "type": "main", "index": 0}]]
+    },
+    "Save Page 2": {
+      "main": [[]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "triggerCount": 0,
+  "tags": [{"name": "Search"}]
+}

@@ -1,0 +1,309 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: abc-n8n-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./mnt/n8n/postgres_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "27832:5432"
+    networks:
+      - n8n-network
+
+  n8n:
+    build:
+      context: .
+      dockerfile: ./docker/n8n/Dockerfile
+    container_name: abc-n8n
+    restart: unless-stopped
+    ports:
+      - "27878:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_SECURE_COOKIE=false
+      - GENERIC_TIMEZONE=Asia/Ho_Chi_Minh
+      - NODES_EXCLUDE=[]
+      - NODE_FUNCTION_ALLOW_EXTERNAL=cheerio
+      - N8N_RUNNERS_MODE=external
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
+      - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
+      - N8N_RUNNERS_TASK_TIMEOUT=7200
+      - N8N_RUNNERS_TASK_REQUEST_TIMEOUT=7200
+    volumes:
+      - ./mnt/n8n/n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/workflows:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chromium:
+        condition: service_healthy
+    networks:
+      - n8n-network
+
+  n8n-runner:
+    image: n8nio/runners:2.12.2
+    container_name: abc-n8n-runner
+    restart: unless-stopped
+    mem_limit: 8g
+    memswap_limit: 8g
+    environment:
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - MINIO_BUCKET=mottruyen
+      - VLLM_BASE_URL=http://vllm:8000/v1
+      - VLLM_API_KEY=vllm-local
+      - VLLM_MODEL=Qwen/Qwen3.6-35B-A3B-FP8
+    volumes:
+      - ./docker/n8n-runner/scripts:/data/scripts:ro
+      - ./mnt/n8n/n8n_data/crawl-output:/data/crawl-output
+      - ./docker/n8n-runner/n8n-task-runners.json:/etc/n8n-task-runners.json:ro
+    depends_on:
+      - n8n
+    networks:
+      - n8n-network
+
+  vllm:
+    build:
+      context: ./docker/vllm
+      dockerfile: Dockerfile
+    container_name: abc-vllm
+    restart: unless-stopped
+    runtime: nvidia
+    mem_limit: 40g
+    memswap_limit: 40g
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TMPDIR=/tmp
+      - TORCHINDUCTOR_CACHE_DIR=/root/.cache/torchinductor
+      - TRITON_CACHE_DIR=/root/.cache/triton
+      - VLLM_CACHE_ROOT=/root/.cache/vllm
+      - FLASHINFER_WORKSPACE_BASE=/root/.cache/flashinfer
+    ipc: host
+    entrypoint: ["/bin/bash", "-c", "python3 /opt/patches/patch-harmony.py && exec python3 -m vllm.entrypoints.openai.api_server \"$@\"", "--"]
+    command: ["--model", "Qwen/Qwen3.6-35B-A3B-FP8", "--trust-remote-code", "--host", "0.0.0.0", "--port", "8000", "--served-model-name", "Qwen/Qwen3.6-35B-A3B-FP8", "--max-model-len", "32768", "--max-num-seqs", "4", "--max-num-batched-tokens", "65536", "--gpu-memory-utilization", "0.50"]
+    tmpfs:
+      - /tmp:size=16g,mode=1777
+    volumes:
+      - ./mnt/vllm/cache:/root/.cache/huggingface
+      - ./mnt/vllm/cache-torchinductor:/root/.cache/torchinductor
+      - ./mnt/vllm/cache-triton:/root/.cache/triton
+      - ./mnt/vllm/cache-vllm:/root/.cache/vllm
+      - ./mnt/vllm/cache-flashinfer:/root/.cache/flashinfer
+      - ./docker/vllm/patch-harmony.py:/opt/patches/patch-harmony.py:ro
+    ports:
+      - "27880:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+    networks:
+      - n8n-network
+
+  omnivoice:
+    build:
+      context: ./docker/omnivoice
+      dockerfile: Dockerfile
+    container_name: abc-omnivoice
+    restart: unless-stopped
+    runtime: nvidia
+    mem_limit: 12g
+    memswap_limit: 12g
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1
+      - HF_TOKEN=${HF_TOKEN}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+      - HF_HOME=/root/.cache/huggingface
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+    volumes:
+      - ./mnt/omnivoice/cache:/root/.cache/huggingface
+      - ./mnt/omnivoice/refs:/refs:ro
+    ports:
+      - "27883:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    networks:
+      - n8n-network
+
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:2026.4.5
+    container_name: abc-openclaw-gateway
+    restart: unless-stopped
+    init: true
+    user: "0:0"
+    command: ["node", "openclaw.mjs", "gateway", "run", "--allow-unconfigured", "--bind", "lan"]
+    environment:
+      - HOME=/home/node
+      - TERM=xterm-256color
+      - TZ=Asia/Ho_Chi_Minh
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - VLLM_API_KEY=vllm-local
+      - VLLM_BASE_URL=http://vllm:8000/v1
+      - N8N_BASE_URL=http://n8n:5678
+      - N8N_API_KEY=${N8N_API_KEY:-}
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-27889}:18789"
+      - "${OPENCLAW_BRIDGE_PORT:-27890}:18790"
+    volumes:
+      - ./mnt/openclaw/config:/home/node/.openclaw
+      - ./docker/openclaw/openclaw.json:/home/node/.openclaw/openclaw.json:ro
+      - ./docker/openclaw/USER.md:/home/node/.openclaw/workspace/USER.md:ro
+      - ./workflows:/workflows:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:18789/healthz 2>/dev/null | grep -q ok || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - n8n-network
+
+  openclaw-cli:
+    image: ghcr.io/openclaw/openclaw:2026.4.5
+    container_name: abc-openclaw-cli
+    restart: "no"
+    user: "0:0"
+    network_mode: "service:openclaw-gateway"
+    stdin_open: true
+    tty: true
+    entrypoint: ["tail", "-f", "/dev/null"]
+    healthcheck:
+      disable: true
+    environment:
+      - HOME=/home/node
+      - TERM=xterm-256color
+      - TZ=Asia/Ho_Chi_Minh
+      - BROWSER=echo
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - OPENCLAW_GATEWAY_URI=ws://localhost:18789
+      - N8N_BASE_URL=http://n8n:5678
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - VLLM_API_KEY=vllm-local
+      - VLLM_BASE_URL=http://vllm:8000/v1
+    volumes:
+      - ./mnt/openclaw/config:/home/node/.openclaw
+      - ./docker/openclaw/openclaw.json:/home/node/.openclaw/openclaw.json:ro
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - openclaw-gateway
+
+  chromium:
+    image: ghcr.io/browserless/chromium:latest
+    container_name: abc-chromium
+    restart: unless-stopped
+    environment:
+      - MAX_CONCURRENT_SESSIONS=5
+      - CONNECTION_TIMEOUT=60000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/json/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - n8n-network
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: abc-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - ./mnt/minio/data:/data
+    ports:
+      - "27800:9000"
+      - "27801:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - n8n-network
+
+  comfyui:
+    build:
+      context: .
+      dockerfile: ./docker/comfyui/Dockerfile
+    container_name: abc-comfyui
+    restart: unless-stopped
+    runtime: nvidia
+    mem_limit: 60g
+    memswap_limit: 60g
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    command:
+      - python
+      - main.py
+      - --listen
+      - 0.0.0.0
+      - --port
+      - "8188"
+      - --reserve-vram
+      - "2"
+    volumes:
+      - ./mnt/comfyui/models:/app/ComfyUI/models
+      - ./mnt/comfyui/output:/app/ComfyUI/output
+      - ./mnt/comfyui/input:/app/ComfyUI/input
+      - ./mnt/comfyui/custom_nodes:/app/ComfyUI/custom_nodes_extra
+      - ./mnt/comfyui/user:/app/ComfyUI/user
+    ipc: host
+    shm_size: 8gb
+    ports:
+      - "27887:8188"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8188/system_stats >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - n8n-network
+
+networks:
+  n8n-network:
+    driver: bridge
