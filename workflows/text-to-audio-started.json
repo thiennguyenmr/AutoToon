@@ -1,0 +1,129 @@
+{
+  "id": "text-to-audio-started",
+  "name": "z-Text to Audio (narrator_ref_audio_men -> started)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trig-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "text",
+              "value": "Tôi là Mặc Lan, cảm ơn bạn vì đã chọn nghe Mặc Lan Ký. Chúc bạn một ngày tốt lành và một đêm ngon giấc.",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "ref_audio",
+              "value": "narrator_ref_audio_men.wav",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "ref_text",
+              "value": "narrator_ref_text.txt",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "language",
+              "value": "vi",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "speed",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "a6",
+              "name": "seed",
+              "value": 42,
+              "type": "number"
+            },
+            {
+              "id": "a7",
+              "name": "pad_ms",
+              "value": 80,
+              "type": "number"
+            },
+            {
+              "id": "a8",
+              "name": "output_bucket",
+              "value": "started",
+              "type": "string"
+            },
+            {
+              "id": "a9",
+              "name": "output_key",
+              "value": "mac-lan-intro.wav",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\ntext = (p.get('text') or '').strip()\nif not text:\n    return [{'json': {'success': False, 'error': 'empty text'}}]\nref_audio = (p.get('ref_audio') or 'narrator_ref_audio_men.wav').strip()\nref_text = (p.get('ref_text') or 'narrator_ref_text.txt').strip()\nlanguage = (p.get('language') or 'vi').strip()\nspeed = float(p.get('speed') or 1.0)\nseed = int(p.get('seed') or 42)\npad_ms = int(p.get('pad_ms') or 80)\noutput_bucket = (p.get('output_bucket') or 'started').strip()\noutput_key = (p.get('output_key') or 'audio.wav').strip()\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\nOMNIVOICE_URL = os.environ.get('OMNIVOICE_URL', 'http://omnivoice:8000/tts')\n\ndef s3_put(bucket, key, data, content_type='application/octet-stream'):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(data).hexdigest()\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    rq = urllib.request.Request(f'{endpoint}{canonical_uri}', data=data, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(rq, timeout=180) as resp:\n        return resp.status\n\ndef tts_call(payload, timeout=900):\n    body = json.dumps(payload).encode()\n    req = urllib.request.Request(OMNIVOICE_URL, data=body, headers={'Content-Type': 'application/json'})\n    with urllib.request.urlopen(req, timeout=timeout) as r:\n        return r.read(), r.headers.get('X-Sample-Rate')\n\npayload = {\n    'text': text,\n    'ref_audio': ref_audio,\n    'ref_text': ref_text,\n    'language': language,\n    'speed': speed,\n    'seed': seed,\n    'pad_ms': pad_ms,\n}\n\ntry:\n    wav_bytes, sr = tts_call(payload)\nexcept Exception as e:\n    return [{'json': {'success': False, 'stage': 'tts', 'error': f'{type(e).__name__}: {e}'}}]\n\ntry:\n    status = s3_put(output_bucket, output_key, wav_bytes, 'audio/wav')\nexcept Exception as e:\n    return [{'json': {'success': False, 'stage': 's3', 'error': f'{type(e).__name__}: {e}'}}]\n\nreturn [{'json': {\n    'success': True,\n    'output': f'{output_bucket}/{output_key}',\n    'audio_size': len(wav_bytes),\n    'sample_rate': sr,\n    'ref_audio': ref_audio,\n    'status': status,\n}}]\n"
+      },
+      "id": "tts-1",
+      "name": "Synthesize & Save to MinIO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Params": {
+      "main": [
+        [
+          {
+            "node": "Synthesize & Save to MinIO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

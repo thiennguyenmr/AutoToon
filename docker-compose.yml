@@ -43,8 +43,8 @@ services:
       - N8N_RUNNERS_MODE=external
       - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
       - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
-      - N8N_RUNNERS_TASK_TIMEOUT=7200
-      - N8N_RUNNERS_TASK_REQUEST_TIMEOUT=7200
+      - N8N_RUNNERS_TASK_TIMEOUT=25200
+      - N8N_RUNNERS_TASK_REQUEST_TIMEOUT=25200
     volumes:
       - ./mnt/n8n/n8n_data:/home/node/.n8n
       - ./workflows:/home/node/workflows:ro
@@ -78,6 +78,7 @@ services:
       - VLLM_BASE_URL=http://vllm:8000/v1
       - VLLM_API_KEY=vllm-local
       - VLLM_MODEL=Qwen/Qwen3.6-35B-A3B-FP8
+      - VLLM_MAX_MODEL_LEN=131072
     volumes:
       - ./docker/n8n-runner/scripts:/data/scripts:ro
       - ./mnt/n8n/n8n_data/crawl-output:/data/crawl-output
@@ -107,7 +108,7 @@ services:
       - FLASHINFER_WORKSPACE_BASE=/root/.cache/flashinfer
     ipc: host
     entrypoint: ["/bin/bash", "-c", "python3 /opt/patches/patch-harmony.py && exec python3 -m vllm.entrypoints.openai.api_server \"$@\"", "--"]
-    command: ["--model", "Qwen/Qwen3.6-35B-A3B-FP8", "--trust-remote-code", "--host", "0.0.0.0", "--port", "8000", "--served-model-name", "Qwen/Qwen3.6-35B-A3B-FP8", "--max-model-len", "32768", "--max-num-seqs", "4", "--max-num-batched-tokens", "65536", "--gpu-memory-utilization", "0.50"]
+    command: ["--model", "Qwen/Qwen3.6-35B-A3B-FP8", "--trust-remote-code", "--host", "0.0.0.0", "--port", "8000", "--served-model-name", "Qwen/Qwen3.6-35B-A3B-FP8", "--max-model-len", "131072", "--max-num-seqs", "4", "--max-num-batched-tokens", "262144", "--gpu-memory-utilization", "0.65"]
     tmpfs:
       - /tmp:size=16g,mode=1777
     volumes:
@@ -171,6 +172,7 @@ services:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - VLLM_API_KEY=vllm-local
       - VLLM_BASE_URL=http://vllm:8000/v1
+      - VLLM_MAX_MODEL_LEN=131072
       - N8N_BASE_URL=http://n8n:5678
       - N8N_API_KEY=${N8N_API_KEY:-}
     ports:

@@ -1,6 +1,6 @@
 {
   "id": "story-to-images-demo",
-  "name": "Story to Images (FLUX) — demo",
+  "name": "z-Story to Images (FLUX) — demo",
   "nodes": [
     {
       "parameters": {},

@@ -34,18 +34,18 @@ help:
 	@echo "Vars: JOBS=N (default $(JOBS))   S=service"
 
 up:
-	$(COMPOSE) up -d --parallel $(JOBS) --no-build
+	$(COMPOSE) --parallel $(JOBS) up -d --no-build
 
 up-staged: up-infra up-light up-app up-heavy
 	@echo "[done] all services up"
 
 up-infra:
 	@echo "[1/4] infra: $(INFRA)"
-	$(COMPOSE) up -d --parallel $(JOBS) --wait $(INFRA)
+	$(COMPOSE) --parallel $(JOBS) up -d --wait $(INFRA)
 
 up-light: up-infra
 	@echo "[2/4] light: $(LIGHT)"
-	$(COMPOSE) up -d --parallel $(JOBS) $(LIGHT)
+	$(COMPOSE) --parallel $(JOBS) up -d $(LIGHT)
 
 up-app: up-light
 	@echo "[3/4] app: $(APP)"
@@ -76,10 +76,10 @@ logs:
 	$(COMPOSE) logs -f --tail=100 $(S)
 
 build:
-	$(COMPOSE) build --parallel --progress plain $(S)
+	$(COMPOSE) --parallel $(JOBS) build --progress plain $(S)
 
 pull:
-	$(COMPOSE) pull --parallel
+	$(COMPOSE) --parallel $(JOBS) pull
 
 status:
 	@echo "=== GPU summary ===" ; nvidia-smi --query-gpu=index,name,memory.used,memory.free,utilization.gpu,utilization.memory,temperature.gpu,power.draw --format=csv 2>/dev/null || echo "no nvidia"

@@ -1,6 +1,6 @@
 {
   "id": "build-character-bible",
-  "name": "Build Character Bible (per story)",
+  "name": "Build Character Bible (per story, batch)",
   "nodes": [
     {
       "parameters": {},
@@ -18,15 +18,129 @@
         "assignments": {
           "assignments": [
             {
-              "id": "a1",
-              "name": "slug",
-              "value": "tro-ve-tu-do",
+              "id": "p1",
+              "name": "bucket_src",
+              "value": "mottruyen-refactored",
               "type": "string"
             },
             {
-              "id": "a2",
+              "id": "p2",
+              "name": "bucket_dst",
+              "value": "mottruyen-characters",
+              "type": "string"
+            },
+            {
+              "id": "p3",
               "name": "style",
               "value": "anime style, soft pastel colors, cinematic lighting, detailed face",
+              "type": "string"
+            },
+            {
+              "id": "p4",
+              "name": "slug_filter",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p5",
+              "name": "max_slugs",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "p6",
+              "name": "overwrite",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "p7",
+              "name": "bucket_segments",
+              "value": "mottruyen-character-segments",
+              "type": "string"
+            },
+            {
+              "id": "p8",
+              "name": "manual_aliases",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p9",
+              "name": "bucket_input",
+              "value": "mottruyen-character-input",
+              "type": "string"
+            },
+            {
+              "id": "p10",
+              "name": "llm_chunk_chars",
+              "value": 60000,
+              "type": "number"
+            },
+            {
+              "id": "p11",
+              "name": "style_anchor",
+              "value": "cinematic historical drama portrait, painterly illustration, mature character design, consistent aesthetic",
+              "type": "string"
+            },
+            {
+              "id": "p12",
+              "name": "style_suffix",
+              "value": "detailed face, atmospheric lighting, age-accurate features",
+              "type": "string"
+            },
+            {
+              "id": "p13",
+              "name": "negative_prompt",
+              "value": "child face, baby face, smooth dewy skin, idol-like, kawaii, blurry, low quality, deformed, extra fingers, extra limbs, watermark, text, signature, bad anatomy, lowres, jpeg artifacts",
+              "type": "string"
+            },
+            {
+              "id": "p14",
+              "name": "style_reference_image",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p15",
+              "name": "redux_strength",
+              "value": 0.4,
+              "type": "number"
+            },
+            {
+              "id": "p16",
+              "name": "redux_strength_type",
+              "value": "attn_bias",
+              "type": "string"
+            },
+            {
+              "id": "p17",
+              "name": "redux_image_scale",
+              "value": 0.4,
+              "type": "number"
+            },
+            {
+              "id": "p18",
+              "name": "lora_name",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p19",
+              "name": "lora_strength",
+              "value": 0.8,
+              "type": "number"
+            },
+            {
+              "id": "p20",
+              "name": "max_model_len",
+              "value": 131072,
+              "type": "number"
+            },
+            {
+              "id": "p21",
+              "name": "bible_filename",
+              "value": "character_bible.md",
               "type": "string"
             }
           ]
@@ -45,14 +159,10 @@
     {
       "parameters": {
         "language": "python",
-        "pythonCode": "import json, urllib.request, re, os, hmac, hashlib, datetime, urllib.parse\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nslug = p.get('slug', 'tro-ve-tu-do')\nstyle = p.get('style', 'anime style')\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket = 'mottruyen'\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\nMODEL = 'Qwen/Qwen3.6-35B-A3B-FP8'\nVLLM_URL = 'http://vllm:8000/v1/chat/completions'\nVLLM_HDRS = {'Content-Type': 'application/json', 'Authorization': 'Bearer vllm-local'}\n\ndef s3_get(key):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    empty_hash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{empty_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'GET\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{empty_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    rq = urllib.request.Request(url, headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': empty_hash,\n        'Authorization': auth,\n    })\n    with urllib.request.urlopen(rq, timeout=60) as resp:\n        return resp.read().decode('utf-8')\n\ndef call_chat(system_msg, user_msg, max_tokens=8192, temperature=0.3, timeout=900):\n    body = json.dumps({\n        'model': MODEL,\n        'messages': [\n            {'role': 'system', 'content': system_msg},\n            {'role': 'user', 'content': user_msg},\n        ],\n        'temperature': temperature,\n        'max_tokens': max_tokens,\n        'chat_template_kwargs': {'enable_thinking': False},\n        'response_format': {'type': 'json_object'},\n    }).encode()\n    req = urllib.request.Request(VLLM_URL, data=body, headers=VLLM_HDRS)\n    with urllib.request.urlopen(req, timeout=timeout) as r:\n        d = json.loads(r.read())\n    return d['choices'][0]['message']['content']\n\ndef extract_json(s):\n    s = re.sub(r'<think>.*?</think>', '', s, flags=re.S)\n    m = re.search(r'```(?:json)?\\s*(\\{.*\\})\\s*```', s, re.S)\n    if m: s = m.group(1)\n    start = s.find('{')\n    if start < 0: return s\n    depth = 0; in_str = False; esc = False\n    for i in range(start, len(s)):\n        c = s[i]\n        if esc: esc = False; continue\n        if c == '\\\\': esc = True; continue\n        if c == '\"': in_str = not in_str; continue\n        if in_str: continue\n        if c == '{': depth += 1\n        elif c == '}':\n            depth -= 1\n            if depth == 0:\n                obj = s[start:i+1]\n                obj = re.sub(r',\\s*([}\\]])', r'\\1', obj)\n                return obj\n    return s[start:]\n\n# Fetch FULL text (no truncation)\nkey = f\"{slug}/{slug}_full.txt\"\nall_text = s3_get(key)\n\n# Chunk to fit Qwen3.6 32k context window. ~22k chars input leaves ~6k tokens for response.\nCHUNK_CHARS = 22000\nchunks = [all_text[i:i+CHUNK_CHARS] for i in range(0, len(all_text), CHUNK_CHARS)] or ['']\n\nSCHEMA = '{\"characters\":[{\"name\":\"...\",\"gender\":\"male|female\",\"description\":\"...\",\"stages\":[{\"stage_name\":\"...\",\"appearance\":\"...\"}]}]}'\nSYSTEM = 'You extract characters from Vietnamese stories. Output STRICT JSON only — no markdown fences, no prose, no commentary. Vietnamese names kept as in the source.'\n\nper_chunk_chars = {}\nerrors = []\nfor idx, chunk in enumerate(chunks):\n    user_msg = (\n        f\"Below is part {idx+1}/{len(chunks)} of a Vietnamese story. Extract every character that appears in this part.\\n\"\n        \"Rules:\\n\"\n        \"1. name in Vietnamese exactly as in the story\\n\"\n        \"2. gender: male or female (best guess if not stated)\\n\"\n        \"3. description: detailed personality + permanent appearance traits (age range, build, distinctive features)\\n\"\n        \"4. If the character clearly has multiple life stages (child→adult, poor→rich, before→after a transformation), list each under 'stages' with stage_name + appearance for that stage. Otherwise omit 'stages'.\\n\"\n        \"5. JSON only.\\n\\n\"\n        f\"Schema: {SCHEMA}\\n\\n\"\n        f\"Story part:\\n{chunk}\"\n    )\n    try:\n        raw = call_chat(SYSTEM, user_msg, max_tokens=8000, temperature=0.3)\n        parsed = json.loads(extract_json(raw))\n    except Exception as e:\n        errors.append({'chunk': idx, 'error': str(e)})\n        continue\n    for c in parsed.get('characters', []) or []:\n        name = (c.get('name') or '').strip()\n        if not name: continue\n        if name not in per_chunk_chars:\n            per_chunk_chars[name] = c\n        else:\n            existing = per_chunk_chars[name]\n            extra_desc = (c.get('description') or '').strip()\n            if extra_desc and extra_desc not in (existing.get('description') or ''):\n                existing['description'] = ((existing.get('description') or '') + ' ' + extra_desc).strip()\n            existing_stages = existing.get('stages') or []\n            seen = {(s.get('stage_name') or '').lower() for s in existing_stages}\n            for s in (c.get('stages') or []):\n                key_s = (s.get('stage_name') or '').lower()\n                if key_s and key_s not in seen:\n                    existing_stages.append(s); seen.add(key_s)\n            existing['stages'] = existing_stages\n\nraw_list = list(per_chunk_chars.values())\n\n# Consolidate: dedupe nicknames / variant names and unify descriptions across chunks.\nif len(raw_list) > 1:\n    consolidate_user = (\n        'You are given characters extracted from different parts of one Vietnamese story. '\n        'Some entries may refer to the same character under nicknames, titles, or variant spellings. '\n        'Merge duplicates into one entry per real character, unify the description (richer text wins), '\n        'and keep ALL unique life stages. Preserve the most commonly used name.\\n\\n'\n        f\"Schema: {SCHEMA}\\n\\n\"\n        f\"Input: {json.dumps({'characters': raw_list}, ensure_ascii=False)}\"\n    )\n    try:\n        raw = call_chat(SYSTEM, consolidate_user, max_tokens=8000, temperature=0.2)\n        merged = json.loads(extract_json(raw))\n        characters = merged.get('characters') or raw_list\n    except Exception as e:\n        errors.append({'stage': 'consolidate', 'error': str(e)})\n        characters = raw_list\nelse:\n    characters = raw_list\n\n# Expand: one item per (character, stage). Items without stages flow through as a single item.\noutput_items = []\nfor c in characters:\n    name = c.get('name', 'Unknown')\n    stages = c.get('stages') or []\n    if not stages:\n        item = dict(c)\n        item['display_name'] = name\n        item['stage_desc'] = ''\n        item['slug'] = slug\n        item['style'] = style\n        output_items.append({'json': item})\n    else:\n        for s in stages:\n            item = dict(c)\n            sname = s.get('stage_name', 'Default')\n            item['display_name'] = f\"{name} ({sname})\"\n            item['stage_desc'] = s.get('appearance', '')\n            item['slug'] = slug\n            item['style'] = style\n            output_items.append({'json': item})\n\nif not output_items:\n    return [{'json': {'status': 'no_characters_found', 'chunks': len(chunks), 'errors': errors}}]\n\nreturn output_items"
-
-
-
-
+        "pythonCode": "\nimport os, re, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nbucket_src = p.get('bucket_src', 'mottruyen-refactored')\nbucket_dst = p.get('bucket_dst', 'mottruyen-characters')\nstyle = p.get('style', 'anime style, soft pastel colors, cinematic lighting, detailed face')\nslug_filter = (p.get('slug_filter') or '').strip()\nmax_slugs = int(p.get('max_slugs') or 0)\noverwrite = bool(p.get('overwrite') or False)\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_list(bucket, prefix='', delimiter='', token=''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    eh = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    qs_pairs = [('list-type', '2'), ('prefix', prefix)]\n    if delimiter: qs_pairs.append(('delimiter', delimiter))\n    if token: qs_pairs.append(('continuation-token', token))\n    qs_pairs.sort(key=lambda kv: kv[0])\n    qs = '&'.join(f'{urllib.parse.quote(k, safe=\"\")}={urllib.parse.quote(v, safe=\"\")}' for k, v in qs_pairs)\n    canonical_uri = '/' + bucket\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{eh}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'GET\\n{canonical_uri}\\n{qs}\\n{canonical_headers}\\n{signed_headers}\\n{eh}'\n    cs = f'{datestamp}/{region}/s3/aws4_request'\n    sts = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{cs}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _h(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _h(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _h(k_date, region); k_service = _h(k_region, 's3'); k_signing = _h(k_service, 'aws4_request')\n    sig = hmac.new(k_signing, sts.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{cs}, SignedHeaders={signed_headers}, Signature={sig}'\n    rq = urllib.request.Request(f'{endpoint}{canonical_uri}?{qs}', headers={'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': eh, 'Authorization': auth})\n    with urllib.request.urlopen(rq, timeout=60) as r:\n        return r.read().decode('utf-8')\n\nslugs = []\ntoken = ''\nwhile True:\n    xml = s3_list(bucket_src, prefix='', delimiter='/', token=token)\n    for pf in re.findall(r'<Prefix>([^<]+)</Prefix>', xml):\n        name = pf.rstrip('/')\n        if not name or '/' in name or name.startswith('.'): continue\n        slugs.append(name)\n    m = re.search(r'<NextContinuationToken>([^<]+)</NextContinuationToken>', xml)\n    if not m: break\n    token = m.group(1)\n\nif slug_filter:\n    slugs = [s for s in slugs if s == slug_filter]\nif max_slugs > 0:\n    slugs = slugs[:max_slugs]\n\nif not slugs:\n    return [{'json': {'status': 'no_slugs', 'bucket_src': bucket_src}}]\n\nreturn [{'json': {'slug': s, 'index': i+1, 'total': len(slugs),\n                   'bucket_src': bucket_src, 'bucket_dst': bucket_dst,\n                   'style': style, 'overwrite': overwrite, 'max_model_len': int(p.get('max_model_len') or 131072), 'bucket_segments': p.get('bucket_segments', 'mottruyen-character-segments'), 'manual_aliases': p.get('manual_aliases', ''), 'bucket_input': p.get('bucket_input', 'mottruyen-character-input'), 'style_anchor': p.get('style_anchor', ''), 'style_suffix': p.get('style_suffix', ''), 'negative_prompt': p.get('negative_prompt', ''), 'style_reference_image': p.get('style_reference_image', ''), 'redux_strength': p.get('redux_strength', 0.5), 'redux_strength_type': p.get('redux_strength_type', 'attn_bias'), 'redux_image_scale': p.get('redux_image_scale', 0.4), 'lora_name': p.get('lora_name', ''), 'lora_strength': p.get('lora_strength', 0.8), 'bible_filename': p.get('bible_filename', 'character_bible.md')}} for i, s in enumerate(slugs)]\n"
       },
-      "id": "node-analyze",
-      "name": "Analyze Characters",
+      "id": "node-list",
+      "name": "List Slugs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -62,13 +172,13 @@
     },
     {
       "parameters": {
-        "language": "python",
-        "pythonCode": "import json, urllib.request, re\n\nSYSTEM = (\n    'You write image-generation prompts for Flux. '\n    'Output ONE line of comma-separated English visual tags only — no preface, no numbering, no quotes, no markdown. '\n    'Tags must describe the character portrait: face shape, eye color, hair (color/length/style), skin tone, age, '\n    'build, clothing, distinctive accessories. Do NOT include background, scene, action, or camera direction.'\n)\n\ndef build_prompt(char):\n    name = char.get('display_name') or char.get('name', 'Unknown')\n    desc = (char.get('description') or '').strip()\n    stage_desc = (char.get('stage_desc') or '').strip()\n    gender = (char.get('gender') or '').strip()\n    full_info = f\"Character: {name}. Gender: {gender or 'unknown'}. Base description: {desc}.\"\n    if stage_desc:\n        full_info += f\" Specific appearance for this stage: {stage_desc}.\"\n    user_msg = (\n        'Build a Flux portrait prompt for the following character. Return tags only, no prose.\\n\\n'\n        f\"{full_info}\"\n    )\n    body = json.dumps({\n        'model': 'Qwen/Qwen3.6-35B-A3B-FP8',\n        'messages': [\n            {'role': 'system', 'content': SYSTEM},\n            {'role': 'user', 'content': user_msg},\n        ],\n        'temperature': 0.4,\n        'max_tokens': 600,\n        'chat_template_kwargs': {'enable_thinking': False},\n    }).encode()\n    req = urllib.request.Request('http://vllm:8000/v1/chat/completions',\n        data=body, headers={'Content-Type': 'application/json', 'Authorization': 'Bearer vllm-local'})\n    with urllib.request.urlopen(req, timeout=300) as r:\n        d = json.loads(r.read())\n    text = (d['choices'][0]['message']['content'] or '').strip()\n    text = re.sub(r'^```[a-zA-Z]*\\s*|\\s*```$', '', text).strip()\n    text = re.sub(r'^(prompt|tags|portrait)\\s*[:\\-]\\s*', '', text, flags=re.I)\n    text = text.replace('\\n', ', ').strip(' ,')\n    return text\n\noutput = []\nfor it in _items:\n    char = dict(it['json'])\n    try:\n        char['portrait_prompt'] = build_prompt(char)\n    except Exception as e:\n        char['portrait_prompt'] = ''\n        char['prompt_error'] = str(e)\n    output.append({'json': char})\n\nreturn output"
+        "batchSize": 1,
+        "options": {}
       },
-      "id": "node-prompt",
-      "name": "Generate Prompts",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "loop-slugs",
+      "name": "Loop Over Slugs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
       "position": [
         860,
         300
@@ -76,15 +186,16 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "language": "python",
-        "pythonCode": "import json, urllib.request, time, uuid, os, hmac, hashlib, datetime, urllib.parse, re, unicodedata\nfrom urllib.parse import urlparse\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket_out = 'mottruyen-characters'\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef vn_slug(s):\n    s = unicodedata.normalize('NFKD', s)\n    s = ''.join(c for c in s if not unicodedata.combining(c))\n    s = s.replace('đ', 'd').replace('Đ', 'D').lower()\n    s = re.sub(r'\\s+', '-', s.strip())\n    s = re.sub(r'[^a-z0-9\\-_.]', '', s)\n    s = re.sub(r'-+', '-', s).strip('-.')\n    return s or 'unknown'\n\ndef render_one(char):\n    cname = char.get('display_name') or char.get('name', 'unknown')\n    portrait_prompt = (char.get('portrait_prompt') or '').strip()\n    slug = char.get('slug', 'unknown')\n    style = char.get('style', 'anime style')\n    cslug = vn_slug(cname)\n    full_prompt = style + ', portrait, head and shoulders, plain neutral background, ' + portrait_prompt\n    flux_wf = {\n        \"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"flux1-dev.safetensors\", \"weight_dtype\": \"default\"}},\n        \"2\": {\"class_type\": \"DualCLIPLoader\", \"inputs\": {\"clip_name1\": \"clip_l.safetensors\", \"clip_name2\": \"t5xxl_fp16.safetensors\", \"type\": \"flux\", \"device\": \"default\"}},\n        \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}},\n        \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": full_prompt}},\n        \"5\": {\"class_type\": \"FluxGuidance\", \"inputs\": {\"conditioning\": [\"4\", 0], \"guidance\": 3.5}},\n        \"6\": {\"class_type\": \"EmptyLatentImage\", \"inputs\": {\"width\": 832, \"height\": 832, \"batch_size\": 1}},\n        \"7\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}},\n        \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"model\": [\"1\", 0], \"positive\": [\"5\", 0], \"negative\": [\"7\", 0], \"latent_image\": [\"6\", 0], \"seed\": 7777, \"steps\": 20, \"cfg\": 1.0, \"sampler_name\": \"euler\", \"scheduler\": \"normal\", \"denoise\": 1.0}},\n        \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}},\n        \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"images\": [\"9\", 0], \"filename_prefix\": f\"characters/{slug}/{cslug}\"}}\n    }\n    body = json.dumps({\"prompt\": flux_wf, \"client_id\": str(uuid.uuid4())}).encode()\n    req = urllib.request.Request(\"http://comfyui:8188/prompt\", data=body, headers={\"Content-Type\":\"application/json\"})\n    with urllib.request.urlopen(req, timeout=30) as r:\n        resp = json.loads(r.read())\n    pid = resp.get('prompt_id')\n    img_bytes = None\n    if pid:\n        deadline = time.time() + 900\n        while time.time() < deadline:\n            time.sleep(5)\n            with urllib.request.urlopen(f\"http://comfyui:8188/history/{pid}\", timeout=10) as r:\n                h = json.loads(r.read())\n            if pid in h:\n                outputs = h[pid].get('outputs', {})\n                for nid, out in outputs.items():\n                    if 'images' in out:\n                        img_filename = out['images'][0]['filename']\n                        img_subfolder = out['images'][0].get('subfolder', '')\n                        url = f\"http://comfyui:8188/view?filename={urllib.parse.quote(img_filename)}&subfolder={urllib.parse.quote(img_subfolder)}&type=output\"\n                        with urllib.request.urlopen(url, timeout=60) as rr:\n                            img_bytes = rr.read()\n                        break\n                if img_bytes: break\n    if not img_bytes:\n        char['image_status'] = 'no_image'\n        return char\n    key = f\"{slug}/{cslug}.png\"\n    parsed_url = urlparse(endpoint); host = parsed_url.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(img_bytes).hexdigest()\n    canonical_uri = '/' + bucket_out + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    rq = urllib.request.Request(url, data=img_bytes, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': 'image/png',\n    })\n    with urllib.request.urlopen(rq, timeout=120) as resp:\n        char['minio_status'] = resp.status\n        char['minio_key'] = f\"{bucket_out}/{key}\"\n    return char\n\noutput = []\nfor it in _items:\n    char = dict(it['json'])\n    try:\n        char = render_one(char)\n    except Exception as e:\n        char['image_error'] = str(e)\n    output.append({'json': char})\n\nreturn output"
+        "pythonCode": "import traceback\ndef _run(_item):\n    import os, re, json, hmac, hashlib, datetime, urllib.parse, urllib.request, time, uuid, unicodedata\n    from urllib.parse import urlparse\n\n    j = _item['json']\n    slug = j.get('slug')\n    if not slug:\n        return {'success': False, 'error': 'no_slug'}\n\n    bucket_src = j.get('bucket_src', 'mottruyen-refactored')\n    bucket_dst = j.get('bucket_dst', 'mottruyen-characters')\n    bucket_input = j.get('bucket_input', 'mottruyen-character-input')\n    bible_filename = (j.get('bible_filename') or 'character_bible.md').strip()\n    style = j.get('style', 'cinematic historical drama illustration, semi-realistic anime, painterly realism, mature character design')\n    style_anchor = (j.get('style_anchor') or '').strip()\n    style_suffix = (j.get('style_suffix') or '').strip()\n    negative_prompt = (j.get('negative_prompt') or '').strip()\n    style_reference_image = (j.get('style_reference_image') or '').strip()\n    redux_strength = float(j.get('redux_strength') or 0.4)\n    redux_strength_type = (j.get('redux_strength_type') or 'attn_bias').strip()\n    redux_image_scale = float(j.get('redux_image_scale') or 0.4)\n    lora_name = (j.get('lora_name') or '').strip()\n    lora_strength = float(j.get('lora_strength') or 0.8)\n    overwrite = bool(j.get('overwrite') or False)\n\n    endpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\n    access_key = os.environ['MINIO_ACCESS_KEY']\n    secret_key = os.environ['MINIO_SECRET_KEY']\n    region = os.environ.get('MINIO_REGION', 'us-east-1')\n    COMFY_URL = os.environ.get('COMFY_URL', 'http://comfyui:8188')\n\n    def _sign(method, bucket, key='', payload=b''):\n        parsed = urlparse(endpoint); host = parsed.netloc\n        now = datetime.datetime.now(datetime.UTC)\n        amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n        ph = hashlib.sha256(payload).hexdigest() if payload else 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n        cu = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n        ch = f'host:{host}\\nx-amz-content-sha256:{ph}\\nx-amz-date:{amzdate}\\n'\n        sh = 'host;x-amz-content-sha256;x-amz-date'\n        cr = f'{method}\\n{cu}\\n\\n{ch}\\n{sh}\\n{ph}'\n        cs = f'{datestamp}/{region}/s3/aws4_request'\n        sts = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{cs}\\n{hashlib.sha256(cr.encode()).hexdigest()}'\n        def _h(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n        kd = _h(('AWS4' + secret_key).encode(), datestamp); kr = _h(kd, region); ks = _h(kr, 's3'); ki = _h(ks, 'aws4_request')\n        sig = hmac.new(ki, sts.encode(), hashlib.sha256).hexdigest()\n        auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{cs}, SignedHeaders={sh}, Signature={sig}'\n        return f'{endpoint}{cu}', {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': ph, 'Authorization': auth}\n\n    def s3_get(bucket, key):\n        url, h = _sign('GET', bucket, key)\n        with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=120) as r:\n            return r.read()\n\n    def s3_head(bucket, key):\n        url, h = _sign('HEAD', bucket, key)\n        try:\n            with urllib.request.urlopen(urllib.request.Request(url, method='HEAD', headers=h), timeout=30) as r:\n                return int(r.headers.get('Content-Length') or 0)\n        except urllib.error.HTTPError as e:\n            if e.code in (404, 500, 503): return None\n            raise\n        except Exception:\n            return None\n\n    def s3_put(bucket, key, body, ctype):\n        url, h = _sign('PUT', bucket, key, payload=body)\n        h['Content-Type'] = ctype\n        with urllib.request.urlopen(urllib.request.Request(url, data=body, method='PUT', headers=h), timeout=180) as r:\n            return r.status\n\n    def vn_slug(s):\n        s = unicodedata.normalize('NFKD', s)\n        s = ''.join(c for c in s if not unicodedata.combining(c))\n        s = s.replace('\u0111', 'd').replace('\u0110', 'D').lower()\n        s = re.sub(r'\\s+', '-', s.strip())\n        s = re.sub(r'[^a-z0-9\\-_.]', '', s)\n        s = re.sub(r'-+', '-', s).strip('-.')\n        return s or 'unknown'\n\n    def stable_seed(text):\n        return int(hashlib.md5(text.encode('utf-8')).hexdigest(), 16) % (2**31)\n\n    def comfy_upload(filename, data):\n        boundary = '----CF' + uuid.uuid4().hex\n        head = (f'--{boundary}\\r\\nContent-Disposition: form-data; name=\"image\"; filename=\"{filename}\"\\r\\n'\n                f'Content-Type: image/png\\r\\n\\r\\n').encode()\n        tail = (f'\\r\\n--{boundary}\\r\\nContent-Disposition: form-data; name=\"overwrite\"\\r\\n\\r\\ntrue\\r\\n--{boundary}--\\r\\n').encode()\n        body = head + data + tail\n        req = urllib.request.Request(f\"{COMFY_URL}/upload/image\", data=body, method='POST',\n                                     headers={'Content-Type': f'multipart/form-data; boundary={boundary}'})\n        with urllib.request.urlopen(req, timeout=60) as r:\n            return r.read()\n\n    def render_flux(prompt_text, shot, seed, slug, cslug, sslug):\n        # Match seed workflow flux1_dev_text_to_image: 1024x1024 portrait, 832x1216 halfbody.\n        # KH\u00d4NG prepend style anchor/suffix/framing \u2014 Flux nghe prompt th\u1eb3ng t\u1eeb bible.\n        # KH\u00d4NG negative prompt (ConditioningZeroOut nh\u01b0 seed) \u2192 tr\u00e1nh conflict \"child face\" v.v.\n        width, height = (1024, 1024) if shot == 'portrait' else (832, 1216)\n        full = prompt_text  # raw, kh\u00f4ng wrap\n        # B\u1ecf t\u00ean ri\u00eang ti\u1ebfng Vi\u1ec7t (v\u00f4 ngh\u0129a v\u1edbi T5/CLIP, g\u00e2y nhi\u1ec5u): 'of H\u1ea7u phu nh\u00e2n, a female' -> 'of a female'\n        full = re.sub(r'\\bof\\s+[^,.]+?,\\s*(an?\\s+(?:fe)?male)\\b', r'of \\1', full, flags=re.I)\n\n        ref_uploaded = None\n        if style_reference_image:\n            try:\n                if '/' in style_reference_image:\n                    parts = style_reference_image.split('/', 1)\n                    rb, rk = parts[0], parts[1]\n                else:\n                    rb, rk = bucket_input, style_reference_image\n                ref_bytes = s3_get(rb, rk)\n                ref_uploaded = f\"redux_ref_{stable_seed(rk) % 100000}.png\"\n                comfy_upload(ref_uploaded, ref_bytes)\n            except Exception:\n                ref_uploaded = None\n\n        out_name = f\"{slug}/{cslug}/{sslug}_{shot}\"\n        wf = {\n            \"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"flux1-dev.safetensors\", \"weight_dtype\": \"default\"}},\n            \"2\": {\"class_type\": \"DualCLIPLoader\", \"inputs\": {\"clip_name1\": \"clip_l.safetensors\", \"clip_name2\": \"t5xxl_fp16.safetensors\", \"type\": \"flux\", \"device\": \"default\"}},\n            \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}},\n            \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": full}},\n            \"5\": {\"class_type\": \"FluxGuidance\", \"inputs\": {\"conditioning\": [\"4\", 0], \"guidance\": 3.0}},\n            \"6\": {\"class_type\": \"EmptyLatentImage\", \"inputs\": {\"width\": width, \"height\": height, \"batch_size\": 1}},\n            \"7\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}},\n            \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"model\": [\"1\", 0], \"positive\": [\"5\", 0], \"negative\": [\"7\", 0], \"latent_image\": [\"6\", 0], \"seed\": int(seed), \"steps\": 28, \"cfg\": 1.0, \"sampler_name\": \"euler\", \"scheduler\": \"simple\", \"denoise\": 1.0}},\n            \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}},\n            \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"images\": [\"9\", 0], \"filename_prefix\": f\"characters/{out_name}\"}}\n        }\n        if lora_name:\n            wf[\"18\"] = {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\n                \"model\": [\"1\", 0], \"lora_name\": lora_name, \"strength_model\": float(lora_strength),\n            }}\n            wf[\"8\"][\"inputs\"][\"model\"] = [\"18\", 0]\n        if ref_uploaded:\n            wf[\"12\"] = {\"class_type\": \"StyleModelLoader\", \"inputs\": {\"style_model_name\": \"flux1-redux-dev.safetensors\"}}\n            wf[\"13\"] = {\"class_type\": \"CLIPVisionLoader\", \"inputs\": {\"clip_name\": \"sigclip_vision_patch14_384.safetensors\"}}\n            wf[\"14\"] = {\"class_type\": \"LoadImage\", \"inputs\": {\"image\": ref_uploaded}}\n            wf[\"17\"] = {\"class_type\": \"ImageScaleBy\", \"inputs\": {\n                \"image\": [\"14\", 0], \"upscale_method\": \"area\", \"scale_by\": float(redux_image_scale),\n            }}\n            wf[\"15\"] = {\"class_type\": \"CLIPVisionEncode\", \"inputs\": {\"clip_vision\": [\"13\", 0], \"image\": [\"17\", 0], \"crop\": \"center\"}}\n            wf[\"16\"] = {\"class_type\": \"StyleModelApply\", \"inputs\": {\n                \"conditioning\": [\"5\", 0], \"style_model\": [\"12\", 0], \"clip_vision_output\": [\"15\", 0],\n                \"strength\": float(redux_strength), \"strength_type\": redux_strength_type,\n            }}\n            wf[\"8\"][\"inputs\"][\"positive\"] = [\"16\", 0]\n\n        body = json.dumps({\"prompt\": wf, \"client_id\": str(uuid.uuid4())}).encode()\n        req = urllib.request.Request(f\"{COMFY_URL}/prompt\", data=body, headers={\"Content-Type\": \"application/json\"})\n        with urllib.request.urlopen(req, timeout=30) as r:\n            pid = json.loads(r.read()).get('prompt_id')\n        if not pid:\n            return None\n        deadline = time.time() + 900\n        img = None\n        while time.time() < deadline:\n            time.sleep(5)\n            with urllib.request.urlopen(f\"{COMFY_URL}/history/{pid}\", timeout=10) as r:\n                h = json.loads(r.read())\n            if pid in h:\n                for nid, o in h[pid].get('outputs', {}).items():\n                    if 'images' in o:\n                        fn = o['images'][0]['filename']\n                        sf = o['images'][0].get('subfolder', '')\n                        u = f\"{COMFY_URL}/view?filename={urllib.parse.quote(fn)}&subfolder={urllib.parse.quote(sf)}&type=output\"\n                        with urllib.request.urlopen(u, timeout=60) as rr:\n                            img = rr.read()\n                        break\n                if img: break\n        if not img: return None\n        key = f\"{slug}/{cslug}/{sslug}_{shot}.png\"\n        s3_put(bucket_dst, key, img, 'image/png')\n        return key\n\n    # ===== 1. Skip check =====\n    manifest_key = f'{slug}/characters.json'\n    if not overwrite:\n        sz = s3_head(bucket_dst, manifest_key)\n        if sz and sz > 0:\n            return {'success': True, 'slug': slug, 'skipped': True, 'reason': 'manifest_exists',\n                    'manifest': f'{bucket_dst}/{manifest_key}'}\n\n    # ===== 2. Fetch character_bible.md =====\n    try:\n        bible = s3_get(bucket_src, f'{slug}/{bible_filename}').decode('utf-8')\n    except Exception as e:\n        return {'success': False, 'slug': slug, 'error': f'fetch_bible_failed: {type(e).__name__}: {e}',\n                'hint': f'Ch\u1ea1y build-story-summary cho slug n\u00e0y tr\u01b0\u1edbc \u0111\u1ec3 t\u1ea1o {bible_filename}'}\n\n    # ===== 3. Parse bible.md \u2192 character entries =====\n    text = bible\n    # Strip HTML comment metadata header\n    text = re.sub(r'^<!--.*?-->\\s*', '', text, flags=re.S)\n    # Truncate at chapter section if present\n    chapter_split = re.search(r'(?im)^[#>*\\s]*(?:B[\u01afU][\u1edaO]C\\s*[23]\\b|CHIA\\s+TRUY|DI[\u1ec4E]N\\s+BI|X[\u00c1A]C\\s*\u0110[\u1ecaI]NH.{0,30}CH[\u01afU][\u01a0O]NG|(?:\\*\\*\\s*)?Ch[\u01b0u][\u01a1o]ng\\s+\\d)', text)\n    if chapter_split:\n        text = text[:chapter_split.start()]\n\n    # Parse danh s\u00e1ch nh\u00e2n v\u1eadt. H\u1ed7 tr\u1ee3 nhi\u1ec1u format header m\u00e0 LLM xu\u1ea5t ra:\n    #   blockquote \"> **T\u00ean:** Name\" | numbered \"**1. Name**\" / \"### **2. Name**\"\n    #   bullet \"*   **Name**\" | old \"- **T\u00ean nh\u00e2n v\u1eadt**: Name\"\n    # Prompt n\u1eb1m trong backtick: \"**Prompt N (...):** `...`\" (prefix >/* tu\u1ef3 \u00fd).\n    characters = []\n    header_res = [\n        re.compile(r'(?im)^[>\\-\\s]*\\*\\*\\s*T[\u00eae]n(?:\\s*nh[\u00e2a]n\\s*v[\u1eada]t)?\\s*[:\uff1a]?\\s*\\*\\*\\s*[:\uff1a]?\\s*(.+?)\\s*$'),\n        re.compile(r'(?im)^[#>\\s]*\\*\\*\\s*\\d+\\s*[.)]\\s*([^*\\n]+?)\\*\\*\\s*$'),\n        re.compile(r'(?im)^\\s*[-*]\\s+\\*\\*([^*\\n:\uff1a]+?)\\*\\*\\s*$'),\n    ]\n    markers = []\n    for _rx in header_res:\n        _found = list(_rx.finditer(text))\n        if _found:\n            markers = _found\n            break\n    for i, m in enumerate(markers):\n        name_raw = m.group(1).strip()\n        block_start = m.end()\n        block_end = markers[i+1].start() if i+1 < len(markers) else len(text)\n        block = text[block_start:block_end]\n        block = re.split(r'\\n[-=]{3,}', block, 1)[0]\n        characters.append({'name_raw': name_raw, 'block': block})\n\n    parsed = []\n    for c in characters:\n        name_raw = c['name_raw']\n        block = c['block']\n        # Strip parens for alias list\n        name = re.split(r'[(\uff08|*]', name_raw, 1)[0].strip().rstrip('\u2013-\u2014:')\n        if not name:\n            continue\n        aliases = []\n        for am in re.finditer(r'[(\uff08]([^)\uff09]+)[)\uff09]', name_raw):\n            aliases.extend([a.strip() for a in re.split(r'[,\uff0c;\uff1b/]| \u2013 | - ', am.group(1)) if a.strip()])\n        # Description\n        desc_m = re.search(r'\\*\\*[^*]*?Ngo[\u1ea1a]i\\s*h[\u00eci]nh[^*]*\\*\\*\\s*[:\uff1a]\\s*(.+?)(?=\\n\\s*[\\*\\-]\\s*\\*\\*|\\n\\s*\\n|\\Z)', block, re.S)\n        description = (desc_m.group(1) if desc_m else '').strip()\n        age_m = re.search(r'(\\d{1,3}(?:-\\d{1,3})?)\\s*tu[\u1ed5o]i', description)\n        age_range = age_m.group(1) if age_m else ''\n        # Prompts (backtick required for reliable parse)\n        prompts = []\n        prompt_count = 0\n        for pm in re.finditer(r'\\*\\*([^*]*?[Pp]rompt[^*]*?)\\*\\*[\\s>]*[:\uff1a]?[\\s>]*`([^`]+)`', block, re.S):\n            label = pm.group(1).strip()\n            p_text = pm.group(2).strip()\n            # B\u1ecf tham s\u1ed1 Midjourney (--ar, --style, --stylize, --v ...) \u2014 Flux kh\u00f4ng hi\u1ec3u, g\u00e2y nhi\u1ec5u prompt\n            p_text = re.sub(r'\\s+--[a-zA-Z].*$', '', p_text, flags=re.S).strip()\n            # Skip dummy \"(gi\u1ed1ng prompt N)\" / \"same as prompt N\"\n            if re.match(r'\\s*[(\\[\uff08]?\\s*(?:gi[\u1ed1o]ng|same\\s*as)\\s*prompt\\s*\\d', p_text, re.I):\n                continue\n            prompt_count += 1\n            # Stage label: text after \"Prompt N \u2013 \" or in parens, else 'default'\n            stage_m = re.search(r'[Pp]rompt\\s*\\d+\\s*[\u2013\\-\u2014:]\\s*(.+?)\\s*$', label)\n            if stage_m:\n                stage_label = stage_m.group(1).strip().rstrip(':').strip()\n            else:\n                paren_m = re.search(r'[(\uff08]([^)\uff09]+)[)\uff09]', label)\n                stage_label = paren_m.group(1).strip() if paren_m else f'stage-{prompt_count}'\n            prompts.append((stage_label, p_text))\n        if not prompts:\n            continue\n        # Dedupe stage_slugs\n        seen = set()\n        dedup = []\n        for sl, pt in prompts:\n            ss = vn_slug(sl)\n            base = ss; n = 1\n            while ss in seen:\n                n += 1; ss = f'{base}-{n}'\n            seen.add(ss)\n            dedup.append((sl, pt, ss))\n        parsed.append({\n            'name': name, 'aliases': aliases, 'description': description,\n            'age_range': age_range, 'prompts': dedup,\n        })\n    characters = parsed\n\n    if not characters:\n        return {'success': False, 'slug': slug, 'error': 'no_characters_parsed',\n                'hint': 'Markdown kh\u00f4ng c\u00f3 block \"- **T\u00ean nh\u00e2n v\u1eadt**:\" ho\u1eb7c kh\u00f4ng c\u00f3 prompt n\u00e0o'}\n\n    # ===== 4. Render Flux per character \u00d7 stage =====\n    manifest_chars = []\n    errors = []\n    for c in characters:\n        name = c['name']\n        cslug = vn_slug(name)\n        # Seed CH\u1ec8 theo slug+name (KH\u00d4NG theo stage) \u2192 c\u00f9ng base composition/face cho tr\u01b0\u1edbc & sau\n        char_seed = stable_seed(f'{slug}|{name}')\n        # Phong c\u00e1ch th\u1ed1ng nh\u1ea5t = c\u00e2u \u0111\u1ea7u c\u1ee7a Prompt 1; prepend v\u00e0o Prompt 2+ v\u00ec bible hay c\u1eaft m\u1ea5t anchor.\n        _sm = re.match(r'\\s*(.+?\\.)(?:\\s|$)', c['prompts'][0][1])\n        style_prefix = (_sm.group(1).strip() if _sm else '')\n        if len(style_prefix) < 12:\n            style_prefix = style\n        stages_out = []\n        for si, (stage_label, prompt_text, sslug) in enumerate(c['prompts'], 1):\n            # Prompt 1 \u0111\u00e3 c\u00f3 s\u1eb5n anchor; Prompt 2+ prepend phong c\u00e1ch th\u1ed1ng nh\u1ea5t \u1edf \u0111\u1ea7u.\n            composed_prompt = prompt_text if si == 1 else f'{style_prefix} {prompt_text}'\n            portrait_key = None; halfbody_key = None\n            for shot in ('portrait', 'halfbody'):\n                expected = f\"{slug}/{cslug}/{sslug}_{shot}.png\"\n                if not overwrite and s3_head(bucket_dst, expected):\n                    if shot == 'portrait': portrait_key = expected\n                    else: halfbody_key = expected\n                    continue\n                try:\n                    k = render_flux(composed_prompt, shot, char_seed, slug, cslug, sslug)\n                    if k:\n                        if shot == 'portrait': portrait_key = k\n                        else: halfbody_key = k\n                except Exception as e:\n                    errors.append({'stage': 'render', 'char': name, 'stage_name': stage_label, 'shot': shot, 'error': str(e)})\n            stages_out.append({\n                'stage_name': stage_label,\n                'stage_slug': sslug,\n                'prompt': composed_prompt,\n                'seed': char_seed,\n                'portrait_key': portrait_key,\n                'halfbody_key': halfbody_key,\n            })\n        manifest_chars.append({\n            'name': name,\n            'cslug': cslug,\n            'aliases': c['aliases'],\n            'age_range': c['age_range'],\n            'description': c['description'],\n            'stages': stages_out,\n        })\n\n    # ===== 5. Save manifest =====\n    manifest = {\n        'slug': slug,\n        'style': style,\n        'source': f'{bucket_src}/{slug}/{bible_filename}',\n        'lora': lora_name,\n        'characters_count': len(manifest_chars),\n        'characters': manifest_chars,\n        'errors': errors,\n    }\n    body = json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8')\n    try:\n        s3_put(bucket_dst, manifest_key, body, 'application/json; charset=utf-8')\n    except Exception as e:\n        return {'success': False, 'slug': slug, 'error': f's3_put_manifest_failed: {type(e).__name__}: {e}'}\n\n    return {\n        'success': True, 'slug': slug,\n        'manifest': f'{bucket_dst}/{manifest_key}',\n        'characters_count': len(manifest_chars),\n        'errors_count': len(errors),\n        'errors': errors[:10],\n    }\n\ntry:\n    return _run(_item)\nexcept Exception as _e:\n    return {'success': False, 'error': f'{type(_e).__name__}: {_e}', 'traceback': traceback.format_exc()[:2000]}\n"
       },
-      "id": "node-image",
-      "name": "Generate & Save Images",
+      "id": "node-process",
+      "name": "Process Slug",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1080,
+        1180,
         300
       ]
     }
@@ -105,29 +216,41 @@
       "main": [
         [
           {
-            "node": "Analyze Characters",
+            "node": "List Slugs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Analyze Characters": {
+    "List Slugs": {
       "main": [
         [
           {
-            "node": "Generate Prompts",
+            "node": "Loop Over Slugs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Generate Prompts": {
+    "Loop Over Slugs": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Process Slug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Slug": {
       "main": [
         [
           {
-            "node": "Generate & Save Images",
+            "node": "Loop Over Slugs",
             "type": "main",
             "index": 0
           }

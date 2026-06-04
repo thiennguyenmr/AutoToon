@@ -1,0 +1,301 @@
+{
+  "id": "build-story-audio-single-voice",
+  "name": "Mottruyen \u2014 Build Story Audio (single voice, batch all slugs)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trig-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "slug_filter",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p1b",
+              "name": "max_slugs",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "p2",
+              "name": "source_bucket",
+              "value": "mottruyen-refactored",
+              "type": "string"
+            },
+            {
+              "id": "p3",
+              "name": "audio_bucket",
+              "value": "mottruyen-audio-single-voice",
+              "type": "string"
+            },
+            {
+              "id": "p3b",
+              "name": "analysis_bucket",
+              "value": "mottruyen-analysis-single-voice",
+              "type": "string"
+            },
+            {
+              "id": "p4",
+              "name": "llm_chunk_chars",
+              "value": 6000,
+              "type": "number"
+            },
+            {
+              "id": "p5",
+              "name": "narrator_voice_json",
+              "value": "{\"speed\":0.95}",
+              "type": "string"
+            },
+            {
+              "id": "p6",
+              "name": "seed",
+              "value": 42,
+              "type": "number"
+            },
+            {
+              "id": "p7",
+              "name": "narrator_ref_audio",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p8",
+              "name": "narrator_ref_text",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p9",
+              "name": "dialogue_ref_audio",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p10",
+              "name": "dialogue_ref_text",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p11",
+              "name": "intro_ref_audio",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p12",
+              "name": "intro_ref_text",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p13",
+              "name": "intro_pad_ms",
+              "value": 600,
+              "type": "number"
+            },
+            {
+              "id": "p14",
+              "name": "start_text",
+              "value": "T\u00f4i l\u00e0 M\u1eb7c Lan, c\u1ea3m \u01a1n b\u1ea1n v\u00ec \u0111\u00e3 ch\u1ecdn nghe M\u1eb7c Lan K\u00fd. Ch\u00fac b\u1ea1n m\u1ed9t ng\u00e0y t\u1ed1t l\u00e0nh v\u00e0 m\u1ed9t \u0111\u00eam ngon gi\u1ea5c.",
+              "type": "string"
+            },
+            {
+              "id": "p15",
+              "name": "end_text",
+              "value": "N\u1ebfu th\u1ea5y hay cho t\u00f4i xin 1 like v\u00e0 \u0111\u0103ng k\u00ed k\u00eanh, \u0111\u1eebng qu\u00ean \u0111\u1ec3 l\u1ea1i g\u00f3p \u00fd \u0111\u1ec3 ch\u00fang t\u00f4i c\u00f3 th\u1ec3 mang l\u1ea1i cho b\u1ea1n tr\u1ea3i nghi\u1ec7m t\u1ed1t h\u01a1n",
+              "type": "string"
+            },
+            {
+              "id": "p16",
+              "name": "force_gender",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p20",
+              "name": "name_intro_template",
+              "value": "M\u1eddi qu\u00fd C\u00f4, ch\u00fa, anh, ch\u1ecb nghe truy\u1ec7n {name}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import os, re, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nsource_bucket = p.get('source_bucket', 'mottruyen-refactored')\naudio_bucket = p.get('audio_bucket', 'mottruyen-audio')\nanalysis_bucket = p.get('analysis_bucket', 'mottruyen-analysis')\nslug_filter = (p.get('slug_filter') or '').strip()\nmax_slugs = int(p.get('max_slugs') or 0)\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef _sign(method, bucket, key='', qs=''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    empty_hash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    canonical_uri = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{empty_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'{method}\\n{canonical_uri}\\n{qs}\\n{canonical_headers}\\n{signed_headers}\\n{empty_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _s(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _s(k_date, region); k_service = _s(k_region, 's3'); k_signing = _s(k_service, 'aws4_request')\n    sig = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={sig}'\n    url = f'{endpoint}{canonical_uri}' + (f'?{qs}' if qs else '')\n    return url, {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': empty_hash, 'Authorization': auth}\n\ndef s3_list_prefixes(bucket, prefix):\n    qs_pairs = [('delimiter', '/'), ('list-type', '2'), ('prefix', prefix)]\n    qs = '&'.join(f'{urllib.parse.quote(k, safe=\"\")}={urllib.parse.quote(v, safe=\"\")}' for k, v in qs_pairs)\n    url, headers = _sign('GET', bucket, qs=qs)\n    rq = urllib.request.Request(url, headers=headers)\n    with urllib.request.urlopen(rq, timeout=60) as resp:\n        return resp.read().decode('utf-8')\n\nxml = s3_list_prefixes(source_bucket, '')\nprefixes = re.findall(r'<Prefix>([^<]+)</Prefix>', xml)\nslugs = []\nfor pf in prefixes:\n    name = pf.rstrip('/')\n    if not name or '/' in name or name.startswith('.'): continue\n    slugs.append(name)\n\nif slug_filter:\n    slugs = [s for s in slugs if s == slug_filter]\nif max_slugs > 0:\n    slugs = slugs[:max_slugs]\n\nif not slugs:\n    return [{'json': {'status': 'no_slugs', 'source_bucket': source_bucket}}]\n\nreturn [{'json': {\n    'slug': s,\n    'index': i + 1,\n    'total': len(slugs),\n    'source_bucket': source_bucket,\n    'audio_bucket': audio_bucket,\n    'analysis_bucket': analysis_bucket,\n    'llm_chunk_chars': p.get('llm_chunk_chars', 6000),\n    'narrator_voice_json': p.get('narrator_voice_json', ''),\n    'seed': p.get('seed', 42),\n    'narrator_ref_audio': p.get('narrator_ref_audio', ''),\n    'narrator_ref_text': p.get('narrator_ref_text', ''),\n    'dialogue_ref_audio': p.get('dialogue_ref_audio', ''),\n    'dialogue_ref_text': p.get('dialogue_ref_text', ''),\n    'intro_ref_audio': p.get('intro_ref_audio', ''),\n    'intro_ref_text': p.get('intro_ref_text', ''),\n    'intro_pad_ms': p.get('intro_pad_ms', 600),\n    'start_text': p.get('start_text', ''),\n    'end_text': p.get('end_text', ''), 'name_intro_template': p.get('name_intro_template', ''),\n    'force_gender': p.get('force_gender', ''),\n}} for i, s in enumerate(slugs)]"
+      },
+      "id": "node-list-slugs",
+      "name": "List Slugs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-slugs",
+      "name": "Loop Over Slugs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, re, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nslug = p.get('slug', 'a-ham')\nsource_bucket = p.get('source_bucket', 'mottruyen-refactored')\naudio_bucket = p.get('audio_bucket', 'mottruyen-audio-single-voice')\nanalysis_bucket = p.get('analysis_bucket', 'mottruyen-analysis-single-voice')\nseed_base = int(p.get('seed', 42))\nnarrator_ref_audio = (p.get('narrator_ref_audio') or '').strip()\nnarrator_ref_text = (p.get('narrator_ref_text') or '').strip()\ndialogue_ref_audio = (p.get('dialogue_ref_audio') or '').strip() or narrator_ref_audio\ndialogue_ref_text = (p.get('dialogue_ref_text') or '').strip() or narrator_ref_text\nintro_ref_audio = (p.get('intro_ref_audio') or '').strip()\nintro_ref_text = (p.get('intro_ref_text') or '').strip()\nintro_pad_ms = int(p.get('intro_pad_ms') or 600)\nstart_text = (p.get('start_text') or '').strip()\nend_text = (p.get('end_text') or '').strip()\nname_intro_template = (p.get('name_intro_template') or '').strip()\nforce_gender = (p.get('force_gender') or '').strip().lower()\nif force_gender not in ('male', 'female'):\n    force_gender = ''\ntry:\n    narrator_voice = json.loads(p.get('narrator_voice_json') or '{}')\nexcept Exception:\n    narrator_voice = {}\nif not narrator_voice:\n    narrator_voice = {'speed': 0.95}\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\nMODEL = os.environ.get('VLLM_MODEL', 'Qwen/Qwen3.6-35B-A3B-FP8')\nVLLM_URL = (os.environ.get('VLLM_BASE_URL', 'http://vllm:8000/v1').rstrip('/')) + '/chat/completions'\nVLLM_HDRS = {'Content-Type': 'application/json', 'Authorization': f'Bearer {os.environ.get(\"VLLM_API_KEY\", \"vllm-local\")}'}\n\nNARRATOR_INSTRUCTS_BY_GENDER = {\n    'female': 'female, middle-aged, moderate pitch',\n    'male': 'male, middle-aged, low pitch',\n}\nDIALOGUE_INSTRUCTS_BY_GENDER = {\n    'female': 'female, young adult, moderate pitch',\n    'male': 'male, young adult, moderate pitch',\n}\nINTRO_INSTRUCTS_BY_GENDER = {\n    'female': 'female, middle-aged, calm, clear',\n    'male': 'male, middle-aged, calm, clear',\n}\nnarrator_instruct_override = (narrator_voice.get('instruct') if isinstance(narrator_voice, dict) else None)\nnarrator_speed = float((narrator_voice.get('speed') if isinstance(narrator_voice, dict) else None) or 0.95)\n\ndef _sign(method, bucket, key='', qs=''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    eh = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    cu = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    ch = f'host:{host}\\nx-amz-content-sha256:{eh}\\nx-amz-date:{amzdate}\\n'\n    sh = 'host;x-amz-content-sha256;x-amz-date'\n    cr = f'{method}\\n{cu}\\n{qs}\\n{ch}\\n{sh}\\n{eh}'\n    cs = f'{datestamp}/{region}/s3/aws4_request'\n    sts = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{cs}\\n{hashlib.sha256(cr.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    kd = _s(('AWS4' + secret_key).encode(), datestamp); kr = _s(kd, region); ks = _s(kr, 's3'); ksi = _s(ks, 'aws4_request')\n    sig = hmac.new(ksi, sts.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{cs}, SignedHeaders={sh}, Signature={sig}'\n    return f'{endpoint}{cu}' + (f'?{qs}' if qs else ''), {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': eh, 'Authorization': auth}\n\ndef s3_get(bucket, key):\n    url, h = _sign('GET', bucket, key=key)\n    with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=120) as r:\n        return r.read().decode('utf-8')\n\ndef s3_put(bucket, key, data, ct='application/octet-stream'):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    ph = hashlib.sha256(data).hexdigest()\n    cu = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    ch = f'host:{host}\\nx-amz-content-sha256:{ph}\\nx-amz-date:{amzdate}\\n'\n    sh = 'host;x-amz-content-sha256;x-amz-date'\n    cr = f'PUT\\n{cu}\\n\\n{ch}\\n{sh}\\n{ph}'\n    cs = f'{datestamp}/{region}/s3/aws4_request'\n    sts = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{cs}\\n{hashlib.sha256(cr.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    kd = _s(('AWS4' + secret_key).encode(), datestamp); kr = _s(kd, region); ks = _s(kr, 's3'); ksi = _s(ks, 'aws4_request')\n    sig = hmac.new(ksi, sts.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{cs}, SignedHeaders={sh}, Signature={sig}'\n    rq = urllib.request.Request(f'{endpoint}{cu}', data=data, method='PUT', headers={'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': ph, 'Authorization': auth, 'Content-Type': ct})\n    with urllib.request.urlopen(rq, timeout=120) as r:\n        return r.status\n\ndef s3_list_txt(bucket, prefix):\n    qs = f'list-type=2&prefix={urllib.parse.quote(prefix, safe=\"\")}'\n    url, h = _sign('GET', bucket, qs=qs)\n    with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60) as r:\n        body = r.read().decode('utf-8')\n    return [k for k in re.findall(r'<Key>([^<]+)</Key>', body) if k.endswith('.txt')]\n\n# Skip n\u1ebfu manifest \u0111\u00e3 t\u1ed3n t\u1ea1i (slug \u0111\u00e3 build audio xong)\ntry:\n    skip_url, skip_h = _sign('HEAD', audio_bucket, key=f'{slug}/manifest.json')\n    rq_skip = urllib.request.Request(skip_url, method='HEAD', headers=skip_h)\n    with urllib.request.urlopen(rq_skip, timeout=20) as r:\n        if int(r.headers.get('Content-Length') or 0) > 0:\n            return [{'json': {'success': True, 'slug': slug, 'skipped': True, 'reason': 'already_built'}}]\nexcept urllib.error.HTTPError as e:\n    if e.code != 404: raise\nexcept Exception:\n    pass\n\nkeys = s3_list_txt(source_bucket, f'{slug}/')\nif not keys:\n    return [{'json': {'status': 'no_source_file', 'slug': slug, 'bucket': source_bucket}}]\n_full = [k for k in keys if k.endswith('_full.txt')]\nkey = _full[0] if _full else sorted(keys, key=len, reverse=True)[0]\ntext = s3_get(source_bucket, key)\n\n# L\u1ea5y t\u00ean truy\u1ec7n t\u1eeb name.txt \u0111\u1ec3 ch\u00e8n v\u00e0o segment gi\u1edbi thi\u1ec7u (d\u00f2ng \u0111\u1ea7u l\u00e0 t\u00ean).\nstory_name = ''\ntry:\n    name_raw = s3_get(source_bucket, f'{slug}/name.txt')\n    if isinstance(name_raw, bytes): name_raw = name_raw.decode('utf-8', errors='replace')\n    if name_raw:\n        story_name = (name_raw.splitlines()[0] or '').strip()\nexcept Exception:\n    pass\n\n# ===== T\u00e1ch ch\u01b0\u01a1ng theo marker \"=== Ch\u01b0\u01a1ng N: ti\u00eau \u0111\u1ec1 ===\" (gi\u1eef marker, t\u00e1ch TR\u01af\u1edaC khi normalize) =====\nCHAP_RE = re.compile(r'^[ \\t]*===[ \\t]*Ch\u01b0\u01a1ng[ \\t]+(\\d+)[ \\t]*:[ \\t]*(.*?)[ \\t]*===[ \\t]*$', re.M)\nmatches = list(CHAP_RE.finditer(text))\nchapters = []\nif matches:\n    pre = text[:matches[0].start()].strip()\n    if pre:\n        chapters.append({'num': 0, 'title': '', 'body': pre})\n    for ci, m in enumerate(matches):\n        s_ = m.end()\n        e_ = matches[ci + 1].start() if ci + 1 < len(matches) else len(text)\n        chapters.append({'num': int(m.group(1)), 'title': (m.group(2) or '').strip(), 'body': text[s_:e_].strip()})\nelse:\n    chapters = [{'num': 0, 'title': '', 'body': text}]\nchapters = [c for c in chapters if c['body'].strip()]\nif not chapters:\n    return [{'json': {'status': 'no_content', 'slug': slug}}]\n\ndef normalize(t):\n    t = re.sub(r'\\n[=]{3,}[^\\n]*[=]{3,}\\n', '\\n\\n', t)\n    t = re.sub(r'([.,;:!?\u2026])(?=[^\\s.,;:!?\u2026\"\\'\\)\\]\\}\\\\])', r'\\1 ', t)\n    t = re.sub(r'[ \\t]+', ' ', t).strip()\n    return t\n\nplain = '\\n\\n'.join(c['body'] for c in chapters)\n\n# ===== Phase 0: x\u00e1c \u0111\u1ecbnh gi\u1edbi t\u00ednh narrator =====\n# force_gender = '' \u2192 t\u1ef1 ph\u00e1t hi\u1ec7n b\u1eb1ng 1 LLM call; 'male'/'female' \u2192 \u00e9p c\u1ee9ng, b\u1ecf qua LLM.\nanalysis = {'narrator_gender': 'female', 'narrator_is': None}\nanalyze_errors = []\nif force_gender:\n    analysis['narrator_gender'] = force_gender\n    analysis['forced'] = True\nelse:\n    ANALYZE_SYSTEM = 'B\u1ea1n x\u00e1c \u0111\u1ecbnh ng\u01b0\u1eddi d\u1eabn chuy\u1ec7n cho truy\u1ec7n ti\u1ebfng Vi\u1ec7t. Tr\u1ea3 v\u1ec1 STRICT JSON, kh\u00f4ng markdown.'\n    sample = plain[:8000]\n    ANALYZE_USER = ('\u0110\u1ecdc \u0111o\u1ea1n \u0111\u1ea7u truy\u1ec7n. X\u00e1c \u0111\u1ecbnh:\\n'\n        '1. narrator_gender: \"male\" ho\u1eb7c \"female\" \u2014 gi\u1edbi t\u00ednh ng\u01b0\u1eddi d\u1eabn chuy\u1ec7n (suy t\u1eeb x\u01b0ng h\u00f4 v\u00e0 context).\\n'\n        '2. narrator_is: t\u00ean nh\u00e2n v\u1eadt ch\u00ednh ng\u00f4i 1 (n\u1ebfu c\u00f3), ho\u1eb7c null n\u1ebfu ng\u00f4i 3.\\n\\n'\n        'Schema: {\"narrator_gender\":\"male|female\",\"narrator_is\":\"t\u00ean|null\"}\\n\\n'\n        'Truy\u1ec7n:\\n' + sample)\n    try:\n        body = json.dumps({\n            'model': MODEL,\n            'messages': [{'role': 'system', 'content': ANALYZE_SYSTEM}, {'role': 'user', 'content': ANALYZE_USER}],\n            'temperature': 0.1, 'max_tokens': 500,\n            'chat_template_kwargs': {'enable_thinking': False},\n            'response_format': {'type': 'json_object'},\n        }).encode('utf-8')\n        rq = urllib.request.Request(VLLM_URL, data=body, headers=VLLM_HDRS)\n        with urllib.request.urlopen(rq, timeout=300) as r:\n            d = json.loads(r.read())\n        raw = d['choices'][0]['message'].get('content') or ''\n        raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.S)\n        m = re.search(r'\\{.*?\\}', raw, re.S)\n        if m:\n            parsed = json.loads(m.group(0))\n            ng = (parsed.get('narrator_gender') or '').lower()\n            if ng in ('male', 'female'):\n                analysis['narrator_gender'] = ng\n            analysis['narrator_is'] = parsed.get('narrator_is') or None\n    except Exception as e:\n        analyze_errors.append(f'{type(e).__name__}: {e}')\n\ndetected_narrator_gender = analysis['narrator_gender']\n# Auto-pick ref files theo gender narrator (user param override n\u1ebfu set)\nREF_AUDIO_BY_GENDER = {\n    'female': {'narrator': 'narrator_ref_audio_women.wav', 'dialogue': 'dialogue_ref_audio_women.wav', 'intro': 'intro_ref_audio_women.wav'},\n    'male':   {'narrator': 'narrator_ref_audio_men.wav',   'dialogue': 'dialogue_ref_audio_men.wav',   'intro': 'intro_ref_audio_men.wav'},\n}\nif not narrator_ref_audio: narrator_ref_audio = REF_AUDIO_BY_GENDER[detected_narrator_gender]['narrator']\nif not dialogue_ref_audio: dialogue_ref_audio = REF_AUDIO_BY_GENDER[detected_narrator_gender]['dialogue']\nif not intro_ref_audio:    intro_ref_audio    = REF_AUDIO_BY_GENDER[detected_narrator_gender]['intro']\nif not narrator_ref_text:  narrator_ref_text  = 'narrator_ref_text.txt'\nif not dialogue_ref_text:  dialogue_ref_text  = 'dialogue_ref_text.txt'\nif not intro_ref_text:     intro_ref_text     = 'intro_ref_text.txt'\nnarrator_instruct = narrator_instruct_override or NARRATOR_INSTRUCTS_BY_GENDER[detected_narrator_gender]\ndialogue_instruct = DIALOGUE_INSTRUCTS_BY_GENDER[detected_narrator_gender]\nintro_instruct = INTRO_INSTRUCTS_BY_GENDER[detected_narrator_gender]\n\ntry:\n    s3_put(analysis_bucket, f'{slug}/analysis.json',\n           json.dumps({**analysis, 'analyze_errors': analyze_errors,\n                       'chapter_count': len(chapters),\n                       'narrator_instruct': narrator_instruct,\n                       'dialogue_instruct': dialogue_instruct,\n                       'intro_instruct': intro_instruct,\n                       'narrator_ref_audio': narrator_ref_audio,\n                       'narrator_ref_text': narrator_ref_text,\n                       'dialogue_ref_audio': dialogue_ref_audio,\n                       'dialogue_ref_text': dialogue_ref_text,\n                       'intro_ref_audio': intro_ref_audio,\n                       'intro_ref_text': intro_ref_text,\n                       'intro_pad_ms': intro_pad_ms},\n                      ensure_ascii=False, indent=2).encode('utf-8'),\n           'application/json')\nexcept Exception:\n    pass\n\n# ===== Phase 1: m\u1ed7i ch\u01b0\u01a1ng \u2192 1 segment intro (ti\u00eau \u0111\u1ec1) + c\u00e1c segment narrator/dialogue =====\nDIALOGUE_RE = re.compile(r'[\"\u201c]([^\"\u201c\u201d]+)[\"\u201d]')\nTTS_MAX_CHARS = 800\nSENT_END = re.compile(r'(?<=[.!?\u2026])\\s+')\n\ndef split_long(seg):\n    t = seg['text']\n    if len(t) <= TTS_MAX_CHARS:\n        return [seg]\n    sents = SENT_END.split(t)\n    out = []; cur = ''\n    for s in sents:\n        if len(cur) + len(s) + 1 <= TTS_MAX_CHARS:\n            cur = (cur + ' ' + s).strip() if cur else s\n        else:\n            if cur: out.append({'type': seg['type'], 'text': cur})\n            cur = s\n    if cur: out.append({'type': seg['type'], 'text': cur})\n    return out\n\ndef split_speakers(body):\n    raw = []\n    last = 0\n    for m in DIALOGUE_RE.finditer(body):\n        before = body[last:m.start()]\n        if before.strip():\n            raw.append({'type': 'narrator', 'text': before.strip()})\n        quoted = m.group(1)\n        if quoted.strip():\n            raw.append({'type': 'dialogue', 'text': quoted.strip()})\n        last = m.end()\n    tail = body[last:]\n    if tail.strip():\n        raw.append({'type': 'narrator', 'text': tail.strip()})\n    if not raw:\n        raw = [{'type': 'narrator', 'text': body}]\n    segs = []\n    for s in raw:\n        segs.extend(split_long(s))\n    return segs\n\nsegments = []\n# Segment m\u1edf \u0111\u1ea7u (branding) \u2014 \u0111\u1ecdc b\u1eb1ng gi\u1ecdng intro.\nif start_text:\n    segments.append({'type': 'start', 'text': start_text, 'chapter': 0, 'chapter_title': ''})\n# Segment gi\u1edbi thi\u1ec7u t\u00ean truy\u1ec7n \u2014 ch\u00e8n SAU start, TR\u01af\u1edaC intro ch\u01b0\u01a1ng \u0111\u1ea7u, \u0111\u1ecdc b\u1eb1ng gi\u1ecdng intro.\nif name_intro_template and story_name:\n    try:\n        name_intro_text = name_intro_template.format(name=story_name)\n    except Exception:\n        name_intro_text = name_intro_template.replace('{name}', story_name)\n    segments.append({'type': 'name_intro', 'text': name_intro_text, 'chapter': 0, 'chapter_title': ''})\nfor c in chapters:\n    # Segment ti\u00eau \u0111\u1ec1 ch\u01b0\u01a1ng \u2014 \u0111\u1ecdc b\u1eb1ng gi\u1ecdng intro, c\u00f3 kho\u1ea3ng ngh\u1ec9 tr\u01b0\u1edbc & sau (intro_pad_ms).\n    if c['num'] > 0 and c['title']:\n        segments.append({\n            'type': 'intro',\n            'text': f\"Ch\u01b0\u01a1ng {c['num']}: {c['title']}\",\n            'chapter': c['num'],\n            'chapter_title': c['title'],\n        })\n    body = normalize(c['body'])\n    for s in split_speakers(body):\n        s['chapter'] = c['num']\n        s['chapter_title'] = c['title']\n        segments.append(s)\n# Segment k\u1ebft th\u00fac (k\u00eau g\u1ecdi like/\u0111\u0103ng k\u00fd) \u2014 \u0111\u1ecdc b\u1eb1ng gi\u1ecdng intro.\nif end_text:\n    segments.append({'type': 'end', 'text': end_text, 'chapter': 0, 'chapter_title': ''})\n\ntry:\n    s3_put(analysis_bucket, f'{slug}/segments.json',\n           json.dumps({'analysis': analysis, 'chapter_count': len(chapters), 'segments': segments},\n                      ensure_ascii=False, indent=2).encode('utf-8'),\n           'application/json')\nexcept Exception:\n    pass\n\nif not segments:\n    return [{'json': {'status': 'no_segments', 'slug': slug, 'analysis': analysis}}]\n\nout = []\ntotal = len(segments)\nfor i, seg in enumerate(segments):\n    stype = seg['type']\n    if stype in ('intro', 'start', 'end', 'name_intro'):\n        speaker, ref_a, ref_t, instr, pad = stype, intro_ref_audio, intro_ref_text, intro_instruct, intro_pad_ms\n    elif stype == 'dialogue':\n        speaker, ref_a, ref_t, instr, pad = 'dialogue', dialogue_ref_audio, dialogue_ref_text, dialogue_instruct, 80\n    else:\n        speaker, ref_a, ref_t, instr, pad = 'narrator', narrator_ref_audio, narrator_ref_text, narrator_instruct, 80\n    out.append({'json': {\n        'slug': slug,\n        'audio_bucket': audio_bucket,\n        'segment_id': i + 1,\n        'total_segments': total,\n        'chapter': seg.get('chapter', 0),\n        'chapter_title': seg.get('chapter_title', ''),\n        'speaker': speaker,\n        'type': stype,\n        'text': seg['text'],\n        'instruct': instr,\n        'ref_audio': ref_a,\n        'ref_text': ref_t,\n        'pad_ms': pad,\n        'language': 'vi',\n        'speed': narrator_speed,\n        'seed': seed_base,\n    }})\nreturn out\n"
+      },
+      "id": "node-chunks",
+      "name": "Segment by Speaker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\nOMNIVOICE_URL = os.environ.get('OMNIVOICE_URL', 'http://omnivoice:8000/tts')\n\ndef s3_put(bucket, key, data, content_type='application/octet-stream'):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(data).hexdigest()\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    rq = urllib.request.Request(f'{endpoint}{canonical_uri}', data=data, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(rq, timeout=180) as resp:\n        return resp.status\n\ndef tts_call(payload, timeout=900):\n    body = json.dumps(payload).encode()\n    req = urllib.request.Request(OMNIVOICE_URL, data=body, headers={'Content-Type': 'application/json'})\n    with urllib.request.urlopen(req, timeout=timeout) as r:\n        return r.read(), r.headers.get('X-Sample-Rate')\n\nimport re as _re\ndef _safe(s):\n    s = (s or 'narrator').strip()\n    s = _re.sub(r'\\s+', '-', s)\n    s = _re.sub(r'[^a-zA-Z0-9\\-_]', '', s.lower())\n    return s[:24] or 'x'\n\noutput = []\nfor it in _items:\n    seg = dict(it['json'])\n    if seg.get('skipped') or not seg.get('text'):\n        seg.pop('text', None)\n        output.append({'json': seg}); continue\n    slug = seg.get('slug', 'unknown')\n    sid = int(seg.get('segment_id', 0))\n    bucket = seg.get('audio_bucket', 'mottruyen-audio')\n    speaker = seg.get('speaker', 'narrator')\n    payload = {'text': seg.get('text', '')}\n    if seg.get('ref_audio'): payload['ref_audio'] = seg['ref_audio']\n    if seg.get('ref_text'): payload['ref_text'] = seg['ref_text']\n    if seg.get('instruct') and not seg.get('ref_audio'): payload['instruct'] = seg['instruct']\n    if seg.get('language'): payload['language'] = seg['language']\n    if seg.get('speed') is not None: payload['speed'] = seg['speed']\n    if seg.get('seed') is not None: payload['seed'] = seg['seed']\n    if seg.get('pad_ms') is not None: payload['pad_ms'] = seg['pad_ms']\n    try:\n        wav_bytes, sr = tts_call(payload)\n        key = f'{slug}/seg_{sid:04d}_{_safe(speaker)}.wav'\n        s3_put(bucket, key, wav_bytes, 'audio/wav')\n        seg['audio_key'] = f'{bucket}/{key}'\n        seg['audio_size'] = len(wav_bytes)\n        seg['sample_rate'] = sr\n    except Exception as e:\n        seg['audio_error'] = str(e)\n    finally:\n        seg.pop('text', None)\n    output.append({'json': seg})\nreturn output"
+      },
+      "id": "node-tts",
+      "name": "Synthesize Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_put(bucket, key, data, content_type='application/octet-stream'):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(data).hexdigest()\n    canonical_uri = '/' + bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    rq = urllib.request.Request(f'{endpoint}{canonical_uri}', data=data, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(rq, timeout=120) as resp:\n        return resp.status\n\nby_slug = {}\nskipped = []\nfor it in _items:\n    j = it['json']\n    if j.get('skipped'):\n        skipped.append(j.get('slug')); continue\n    sl = j.get('slug')\n    if not sl: continue\n    bk = j.get('audio_bucket', 'mottruyen-audio')\n    grp = by_slug.setdefault(sl, {'bucket': bk, 'clips': [], 'errors': [], 'speaker_stats': {}})\n    speaker = j.get('speaker') or 'narrator'\n    if speaker not in grp['speaker_stats']:\n        grp['speaker_stats'][speaker] = {'gender': j.get('gender'), 'segments': 0, 'bytes': 0}\n    grp['speaker_stats'][speaker]['segments'] += 1\n    if j.get('audio_key'):\n        grp['clips'].append({'segment_id': j.get('segment_id'), 'speaker': speaker, 'key': j['audio_key'], 'size': j.get('audio_size'), 'sr': j.get('sample_rate')})\n        grp['speaker_stats'][speaker]['bytes'] += int(j.get('audio_size') or 0)\n    if j.get('audio_error'):\n        grp['errors'].append({'segment_id': j.get('segment_id'), 'speaker': speaker, 'error': j['audio_error']})\n\noutput = []\nfor sl, grp in by_slug.items():\n    if not grp['clips']:\n        output.append({'json': {'slug': sl, 'status': 'no_clips', 'errors': grp['errors'][:5]}})\n        continue\n    grp['clips'].sort(key=lambda x: int(x['segment_id'] or 0))\n    concat_lines = [f\"file '{c['key'].split('/')[-1]}'\" for c in grp['clips']]\n    concat_txt = '\\n'.join(concat_lines) + '\\n'\n    bk = grp['bucket']\n    try:\n        s3_put(bk, f'{sl}/concat.txt', concat_txt.encode(), 'text/plain')\n    except Exception as e:\n        grp['errors'].append({'stage': 'concat_put', 'error': str(e)})\n    manifest = {\n        'slug': sl,\n        'bucket': bk,\n        'segment_count': len(grp['clips']),\n        'error_count': len(grp['errors']),\n        'speakers': grp['speaker_stats'],\n        'clips': grp['clips'],\n        'errors': grp['errors'][:20],\n        'concat_cmd_local': f'ffmpeg -f concat -safe 0 -i concat.txt -c copy {sl}.wav',\n        'concat_cmd_mp3': f'ffmpeg -f concat -safe 0 -i concat.txt -c:a libmp3lame -b:a 128k {sl}.mp3',\n    }\n    try:\n        s3_put(bk, f'{sl}/manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2).encode(), 'application/json')\n    except Exception as e:\n        manifest['errors'].append({'stage': 'manifest_put', 'error': str(e)})\n    output.append({'json': manifest})\n\nif skipped:\n    output.append({'json': {'skipped_slugs': skipped, 'count': len(skipped)}})\n\nif not output:\n    return [{'json': {'status': 'no_data'}}]\nreturn output"
+      },
+      "id": "node-manifest",
+      "name": "Build Audio Manifest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Params": {
+      "main": [
+        [
+          {
+            "node": "List Slugs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Slugs": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Slugs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Slugs": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Segment by Speaker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segment by Speaker": {
+      "main": [
+        [
+          {
+            "node": "Synthesize Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Synthesize Audio": {
+      "main": [
+        [
+          {
+            "node": "Build Audio Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Audio Manifest": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Slugs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

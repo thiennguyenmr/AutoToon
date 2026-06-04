@@ -1,0 +1,228 @@
+{
+  "id": "build-thumbnail-background",
+  "name": "Build Thumbnail + Background (per slug, batch)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trig-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "slug_filter",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "p2",
+              "name": "max_slugs",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "p3",
+              "name": "source_bucket",
+              "value": "mottruyen-refactored",
+              "type": "string"
+            },
+            {
+              "id": "p4",
+              "name": "output_bucket",
+              "value": "mottruyen-thumnail-background",
+              "type": "string"
+            },
+            {
+              "id": "p5",
+              "name": "style",
+              "value": "cinematic poster art of Chinese period drama, hyper-detailed, sharp eyes, dramatic lighting, painterly, 8k, professional cinematography",
+              "type": "string"
+            },
+            {
+              "id": "p6",
+              "name": "thumb_width",
+              "value": 1280,
+              "type": "number"
+            },
+            {
+              "id": "p7",
+              "name": "thumb_height",
+              "value": 720,
+              "type": "number"
+            },
+            {
+              "id": "p8",
+              "name": "bg_width",
+              "value": 1920,
+              "type": "number"
+            },
+            {
+              "id": "p9",
+              "name": "bg_height",
+              "value": 1088,
+              "type": "number"
+            },
+            {
+              "id": "p10",
+              "name": "sample_chars",
+              "value": 30000,
+              "type": "number"
+            },
+            {
+              "id": "p11",
+              "name": "force_rebuild",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import os, re, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nsource_bucket = p.get('source_bucket', 'mottruyen-refactored')\noutput_bucket = p.get('output_bucket', 'mottruyen-thumnail-background')\nslug_filter = (p.get('slug_filter') or '').strip()\nmax_slugs = int(p.get('max_slugs') or 0)\nforce_rebuild = p.get('force_rebuild', True)\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef _sign(method, bucket, key='', qs=''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    eh = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    cu = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    ch = f'host:{host}\\nx-amz-content-sha256:{eh}\\nx-amz-date:{amzdate}\\n'\n    sh = 'host;x-amz-content-sha256;x-amz-date'\n    cr = f'{method}\\n{cu}\\n{qs}\\n{ch}\\n{sh}\\n{eh}'\n    cs = f'{datestamp}/{region}/s3/aws4_request'\n    sts = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{cs}\\n{hashlib.sha256(cr.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    kd = _s(('AWS4' + secret_key).encode(), datestamp); kr = _s(kd, region); ks = _s(kr, 's3'); ksi = _s(ks, 'aws4_request')\n    sig = hmac.new(ksi, sts.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{cs}, SignedHeaders={sh}, Signature={sig}'\n    return f'{endpoint}{cu}' + (f'?{qs}' if qs else ''), {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': eh, 'Authorization': auth}\n\ndef list_prefixes(bucket, prefix=''):\n    qs = 'delimiter=' + urllib.parse.quote('/', safe='') + '&list-type=2&prefix=' + urllib.parse.quote(prefix, safe='')\n    url, h = _sign('GET', bucket, qs=qs)\n    with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60) as r:\n        return r.read().decode('utf-8')\n\nxml = list_prefixes(source_bucket)\nprefixes = re.findall(r'<Prefix>([^<]+)</Prefix>', xml)\nslugs = [pf.rstrip('/') for pf in prefixes if pf.rstrip('/') and '/' not in pf.rstrip('/') and not pf.startswith('.')]\n\nif slug_filter: slugs = [s for s in slugs if s == slug_filter]\nif max_slugs > 0: slugs = slugs[:max_slugs]\n\nif not slugs:\n    return [{'json': {'status': 'no_slugs', 'bucket': source_bucket}}]\n\nreturn [{'json': {\n    'slug': s, 'index': i + 1, 'total': len(slugs),\n    'source_bucket': source_bucket, 'output_bucket': output_bucket,\n    'style': p.get('style', ''),\n    'thumb_width': p.get('thumb_width', 1280), 'thumb_height': p.get('thumb_height', 720),\n    'bg_width': p.get('bg_width', 1920), 'bg_height': p.get('bg_height', 1088),\n    'sample_chars': p.get('sample_chars', 30000),\n    'force_rebuild': force_rebuild,\n}} for i, s in enumerate(slugs)]"
+      },
+      "id": "node-list",
+      "name": "List Slugs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-1",
+      "name": "Loop Over Slugs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, re, time, uuid, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nslug = p.get('slug')\nif not slug:\n    return [{'json': {'success': False, 'stage': 'generate_prompts', 'error': 'no slug'}}]\nsource_bucket = p.get('source_bucket', 'mottruyen-refactored')\noutput_bucket = p.get('output_bucket', 'mottruyen-thumnail-background')\nstyle = p.get('style', 'cinematic Vietnamese fantasy art, dramatic lighting')\nthumb_w = int(p.get('thumb_width', 1280)); thumb_h = int(p.get('thumb_height', 720))\nbg_w = int(p.get('bg_width', 1920)); bg_h = int(p.get('bg_height', 1088))\nsample_chars = int(p.get('sample_chars', 30000))\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\nMODEL = os.environ.get('VLLM_MODEL', 'Qwen/Qwen3.6-35B-A3B-FP8')\nVLLM_URL = (os.environ.get('VLLM_BASE_URL', 'http://vllm:8000/v1').rstrip('/')) + '/chat/completions'\nVLLM_HDRS = {'Content-Type': 'application/json', 'Authorization': f'Bearer {os.environ.get(\"VLLM_API_KEY\", \"vllm-local\")}'}\nCOMMON_NEGATIVE = 'text, captions, words, watermark, logo, signature, blurry, low quality, bad anatomy, distorted face, deformed hands, extra fingers, anime, cartoon, 3d render, modern clothing, modern objects, gore, blood, graphic violence, child injury'\n\ndef as_bool(value, default=False):\n    if isinstance(value, bool):\n        return value\n    if value is None:\n        return default\n    return str(value).strip().lower() in ('1', 'true', 'yes', 'y', 'on')\n\nforce_rebuild = as_bool(p.get('force_rebuild'), True)\n\ndef _sign(method, bucket, key='', qs='', payload=b''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    ph = hashlib.sha256(payload).hexdigest() if payload else 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    cu = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    ch = f'host:{host}\\nx-amz-content-sha256:{ph}\\nx-amz-date:{amzdate}\\n'\n    sh = 'host;x-amz-content-sha256;x-amz-date'\n    cr = f'{method}\\n{cu}\\n{qs}\\n{ch}\\n{sh}\\n{ph}'\n    cs = f'{datestamp}/{region}/s3/aws4_request'\n    sts = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{cs}\\n{hashlib.sha256(cr.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    kd = _s(('AWS4' + secret_key).encode(), datestamp); kr = _s(kd, region); ks = _s(kr, 's3'); ksi = _s(ks, 'aws4_request')\n    sig = hmac.new(ksi, sts.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{cs}, SignedHeaders={sh}, Signature={sig}'\n    return f'{endpoint}{cu}' + (f'?{qs}' if qs else ''), {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': ph, 'Authorization': auth}\n\ndef s3_get(bucket, key):\n    url, h = _sign('GET', bucket, key=key)\n    with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=120) as r:\n        return r.read()\n\ndef s3_put(bucket, key, data, ct='application/octet-stream'):\n    url, h = _sign('PUT', bucket, key=key, payload=data)\n    h['Content-Type'] = ct\n    rq = urllib.request.Request(url, data=data, method='PUT', headers=h)\n    with urllib.request.urlopen(rq, timeout=180) as r:\n        return r.status\n\ndef s3_head(bucket, key):\n    url, h = _sign('HEAD', bucket, key=key)\n    rq = urllib.request.Request(url, method='HEAD', headers=h)\n    try:\n        with urllib.request.urlopen(rq, timeout=30) as r:\n            return int(r.headers.get('Content-Length') or 0)\n    except urllib.error.HTTPError as e:\n        if e.code == 404: return None\n        raise\n\ndef s3_list(bucket, prefix):\n    qs = 'list-type=2&prefix=' + urllib.parse.quote(prefix, safe='')\n    url, h = _sign('GET', bucket, qs=qs)\n    with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60) as r:\n        return r.read().decode('utf-8')\n\ndef story_sample(text, limit):\n    text = re.sub(r'\\r\\n?', '\\n', text).strip()\n    limit = max(limit, 30000)\n    if len(text) <= limit:\n        return text\n    part = max(limit // 3, 4000)\n    start = text[:part].strip()\n    mid_at = max((len(text) // 2) - (part // 2), 0)\n    middle = text[mid_at:mid_at + part].strip()\n    end = text[-part:].strip()\n    return (\n        '[BEGINNING]\\n' + start +\n        '\\n\\n[MIDDLE]\\n' + middle +\n        '\\n\\n[ENDING]\\n' + end\n    )[:limit + 80]\n\ndef clean_list(value, limit=8):\n    if not isinstance(value, list):\n        return []\n    out = []\n    for item in value:\n        s = str(item).strip()\n        if s and s not in out:\n            out.append(s)\n    return out[:limit]\n\ndef text_value(value, default=''):\n    if value is None:\n        return default\n    if isinstance(value, list):\n        parts = [text_value(item, '') for item in value]\n        joined = '; '.join(part for part in parts if part)\n        return joined or default\n    if isinstance(value, dict):\n        try:\n            return json.dumps(value, ensure_ascii=False)\n        except Exception:\n            return str(value).strip() or default\n    text = str(value).strip()\n    return text or default\n\ndef ensure_prompt(prompts, slug):\n    title = text_value(prompts.get('story_title_vi'), slug.replace('-', ' ').title())\n    summary = text_value(prompts.get('story_summary'), 'A Chinese period drama story with betrayal, loss, hidden truth, and emotional redemption.')\n    protagonist = text_value(prompts.get('protagonist'), 'the main character from the story, period clothing, intense emotional expression')\n    antagonist = text_value(prompts.get('antagonist'), 'the person or social force that hurts the protagonist')\n    protector = text_value(prompts.get('protector'), '')\n    if protector.lower() in ('null', 'none', 'không có', 'khong co'):\n        protector = ''\n    setting = text_value(prompts.get('primary_setting'), 'ancient Chinese estate or palace courtyard')\n    emotional_hook = text_value(prompts.get('emotional_hook'), 'betrayal, grief, and a shocking reversal of fate')\n    visual_moment = text_value(prompts.get('thumbnail_scene'), 'the decisive emotional moment of the story')\n    objects = clean_list(prompts.get('key_objects'), 8)\n    if len(objects) < 5:\n        objects = (objects + ['ancient letter', 'jade pendant', 'broken hairpin', 'red lantern', 'snow-covered plum blossom'])[:5]\n    palette = text_value(prompts.get('color_palette'), 'midnight blue shadows, crimson accents, warm lantern gold, pale moonlight')\n    objects_4 = ', '.join(objects[:4])\n    objects_5 = ', '.join(objects[:5])\n\n    if not text_value(prompts.get('thumbnail_prompt'), ''):\n        protector_part = f', with {protector} beside them as a protective presence' if protector else ''\n        prompts['thumbnail_prompt'] = (\n            f'Cinematic 16:9 YouTube thumbnail for a Chinese period drama story, based on the scene: {visual_moment}. '\n            f'Leave the left 40 percent as clean dark negative space for Vietnamese title overlay, no text in the image. '\n            f'On the right 60 percent show a sharp close-up of {protagonist}{protector_part}; behind them show {antagonist} as a smaller threatening figure or back-view silhouette. '\n            f'Use the story setting {setting}, include story symbols such as {objects_4}. '\n            f'The emotion must read as {emotional_hook}. Dramatic warm lantern light against cool moonlight, {palette}, hyper-detailed faces, painterly historical poster, professional cinematography.'\n        )\n    if not text_value(prompts.get('background_prompt'), ''):\n        prompts['background_prompt'] = (\n            f'Wide 16:9 atmospheric storytelling background for a long Chinese period drama video, based on {title}. '\n            f'Interior point of view through an ornate wooden lattice window toward {setting}; foreground has a dark wooden table with {objects_5}, arranged as meaningful story symbols. '\n            f'Outside, show the key mood of the story: {emotional_hook}, with ancient architecture, lanterns, mist or snow/rain if it fits, distant small character silhouettes, and quiet cinematic depth. '\n            f'Keep the middle-bottom area darker and uncluttered for subtitles, no text in the image. Warm candlelight inside contrasts with cool outdoor moonlight, painterly matte painting, calm but emotionally loaded.'\n        )\n    prompts['thumbnail_negative'] = text_value(prompts.get('thumbnail_negative'), COMMON_NEGATIVE)\n    prompts['background_negative'] = text_value(prompts.get('background_negative'), COMMON_NEGATIVE)\n    prompts['key_objects'] = objects\n    prompts['story_title_vi'] = title\n    prompts['story_summary'] = summary\n    prompts['story_image_brief'] = text_value(prompts.get('story_image_brief'), f'Story-specific image lock: {title}; protagonist {protagonist}; antagonist {antagonist}; setting {setting}; emotional hook {emotional_hook}; key symbols {objects_5}.')\n    return prompts\n\ndef build_story_prompts(prompts):\n    title = text_value(prompts.get('story_title_vi'), '')\n    summary = text_value(prompts.get('story_summary'), '')\n    protagonist = text_value(prompts.get('protagonist'), 'the protagonist described in the story')\n    antagonist = text_value(prompts.get('antagonist'), 'the antagonist or main opposing force described in the story')\n    protector = text_value(prompts.get('protector'), '')\n    if protector.lower() in ('null', 'none', 'không có', 'khong co'):\n        protector = ''\n    setting = text_value(prompts.get('primary_setting'), 'the most important location from the story')\n    emotional_hook = text_value(prompts.get('emotional_hook'), 'the central emotional twist of the story')\n    thumbnail_scene = text_value(prompts.get('thumbnail_scene'), 'the most dramatic turning point from the story')\n    background_scene = text_value(prompts.get('background_scene'), setting)\n    palette = text_value(prompts.get('color_palette'), 'cinematic warm and cool contrast matching the story mood')\n    objects = clean_list(prompts.get('key_objects'), 8)\n    objects_4 = ', '.join(objects[:4]) if objects else 'story-specific symbolic objects from the plot'\n    objects_6 = ', '.join(objects[:6]) if objects else 'story-specific symbolic objects from the plot'\n    story_lock = text_value(prompts.get('story_image_brief'), '')\n\n    protector_clause = f'Include {protector} only as a secondary supporting figure, visually distinct from the protagonist. ' if protector else 'Do not add a protector character unless the story clearly has one. '\n    thumbnail_prompt = (\n        f'Exact-story cinematic 16:9 YouTube thumbnail for \"{title}\". '\n        f'STORY LOCK: {story_lock} Summary: {summary} '\n        f'Depict this specific turning point: {thumbnail_scene}. '\n        f'Leave the left 40 percent as clean dark negative space for later Vietnamese text overlay; absolutely no text, letters, signs, captions, watermark, or logo in the image. '\n        f'On the right 60 percent, show the protagonist exactly as described: {protagonist}, close-up face, readable emotion tied to: {emotional_hook}. '\n        f'Show the antagonist or opposing force exactly as described: {antagonist}, smaller and behind or beside the protagonist, making the conflict instantly clear. '\n        f'{protector_clause}'\n        f'Use this exact story setting, not a generic palace: {setting}. '\n        f'Use only story-relevant props and symbols: {objects_4}. '\n        f'No random palace gate, snow, red lanterns, rabbits, daggers, jade pendants, emperors, soldiers, mother-daughter silhouettes, or extra characters unless they are part of this story. '\n        f'Composition must feel like one frozen narrative moment from the plot, not a generic Chinese period poster. '\n        f'Color and light: {palette}; dramatic rim light, sharp expressive face, historical Chinese period clothing only, cinematic painterly realism.'\n    )\n    background_prompt = (\n        f'Exact-story wide 16:9 atmospheric background for long-form storytelling video \"{title}\". '\n        f'STORY LOCK: {story_lock} Summary: {summary} '\n        f'Depict this quiet meaningful background scene: {background_scene}. '\n        f'Use the exact primary setting from the story: {setting}; do not replace it with a generic palace, generic room, generic snowy courtyard, or generic lantern scene. '\n        f'Foreground should contain 4 to 6 story-specific symbolic objects arranged naturally in the scene: {objects_6}. '\n        f'These objects must feel connected to the protagonist and the twist: {emotional_hook}. '\n        f'Keep characters minimal: at most one or two tiny distant silhouettes only if they clarify the story; focus on environment, props, mood, and meaning. '\n        f'Leave a darker uncluttered subtitle-safe area in the middle-bottom; absolutely no text, letters, signs, captions, watermark, or logo in the image. '\n        f'No random palace gate, snow, red lanterns, rabbits, daggers, jade pendants, emperors, soldiers, mother-daughter silhouettes, or modern objects unless they are part of this story. '\n        f'Painterly matte painting, atmospheric depth, cinematic historical Chinese period drama realism, color and light: {palette}.'\n    )\n    return thumbnail_prompt, background_prompt\n\n# Skip only when explicitly requested. Default is to rebuild so prompt changes overwrite old mismatched images.\nif not force_rebuild and s3_head(output_bucket, f'{slug}/thumbnail.png') and s3_head(output_bucket, f'{slug}/background.png'):\n    return [{'json': {'success': True, 'slug': slug, 'skipped': True, 'reason': 'already_built'}}]\n\n# Fetch source text\nkeys_xml = s3_list(source_bucket, f'{slug}/')\nkeys = [k for k in re.findall(r'<Key>([^<]+)</Key>', keys_xml) if k.endswith('.txt')]\nif not keys:\n    return [{'json': {'success': False, 'stage': 'generate_prompts', 'slug': slug, 'error': 'no_source_file'}}]\n_full = [k for k in keys if k.endswith('_full.txt')]\nkey = _full[0] if _full else sorted(keys, key=len, reverse=True)[0]\ntext = s3_get(source_bucket, key).decode('utf-8')\nsample = story_sample(text, sample_chars)\n\n# Phase 1: gen prompts via vLLM\nSYSTEM = (\n    'Bạn là creative director chuyên thumbnail YouTube và ảnh nền kể chuyện cổ trang Trung Hoa. '\n    'Nhiệm vụ quan trọng nhất: bám sát Ý NGHĨA TRUYỆN, nhân vật, cú twist, bối cảnh và biểu tượng trong truyện; không ép cảnh generic nếu truyện không có. '\n    'Tạo phân tích thị giác chính xác cho Flux/ComfyUI. FINAL FLUX PROMPTS WILL BE BUILT BY CODE from your fields, so extract concrete story facts and do not invent decorative cliches. Trả về STRICT JSON hợp lệ, không markdown, không giải thích.'\n)\n\nUSER = ('Đọc mẫu truyện gồm BEGINNING/MIDDLE/ENDING, suy luận mạch truyện, rồi tạo asset hình ảnh BÁM SÁT TRUYỆN.\\n\\n'\n        'NGUYÊN TẮC BẮT BUỘC:\\n'\n        '======== STORY MATCHING PRIORITY ========\\n'\n        '- Ưu tiên số 1 là đúng truyện, không phải đẹp chung chung. Nếu prompt đẹp nhưng sai truyện thì coi là thất bại.\\n'\n        '- Không dùng palace, snow, red lantern, emperor, battlefield, mother-daughter, rabbit, dagger, jade pendant nếu truyện không nhắc hoặc không suy ra trực tiếp.\\n'\n        '- Mọi nhân vật trong prompt phải có vai trò trong truyện: protagonist / antagonist / protector / witness. Không bịa thêm nhân vật trang trí.\\n'\n        '- Background phải kể chuyện bằng đồ vật và bối cảnh đúng truyện, không phải một căn phòng cổ trang generic.\\n\\n'\n        '- Không dùng một cảnh cố định cho mọi truyện. Chọn scene/setting/symbol đúng với truyện này.\\n'\n        '- Nếu truyện có cung đấu, phủ hầu, thôn nghèo, chiến trường, miếu hoang, tuyết, mưa, hỏa hoạn, bệnh tật, nhận thân, báo thù... hãy đưa chính các yếu tố đó vào prompt.\\n'\n        '- Thumbnail phải đọc được cảm xúc trong 1 giây: ai bị tổn thương, ai gây hại, cú twist là gì.\\n'\n        '- Background phải hợp để xem 30-60 phút: ít nhân vật, nhiều không khí, nhiều biểu tượng truyện, có vùng trống tối ở giữa-dưới cho phụ đề.\\n'\n        '- KHÔNG yêu cầu chữ trong ảnh; chữ chỉ lưu ở thumbnail_text/background_text để overlay sau.\\n\\n'\n        '======== PHÂN TÍCH TRUYỆN ========\\n'\n        '- story_summary: 5 dòng tiếng Việt, gồm mở đầu, xung đột, twist, kết.\\n'\n        '- emotional_hook: 1 câu tiếng Việt nêu cảm xúc/cú twist lớn nhất.\\n'\n        '- protagonist: tên, tuổi/nhóm tuổi, ngoại hình/trang phục, cảm xúc chính.\\n'\n        '- antagonist: phản diện/lực cản chính, ngoại hình/trang phục/thái độ.\\n'\n        '- protector: người cứu/bảo vệ/đồng minh; null nếu không có.\\n'\n        '- primary_setting: bối cảnh thị giác quan trọng nhất của truyện.\\n'\n        '- key_objects: 5-8 đồ vật/biểu tượng CỤ THỂ xuất hiện hoặc suy ra rất gần từ truyện, ưu tiên liên quan protagonist. Không dùng vật mẫu generic nếu truyện không có.\\n'\n        '- thumbnail_scene: một khoảnh khắc kịch tính nhất để vẽ thumbnail.\\n'\n        '- background_scene: không gian nền yên tĩnh nhưng chứa ý nghĩa truyện.\\n'\n        '- color_palette: 4-6 màu/ánh sáng phù hợp tâm trạng truyện.\\n'\n        '- story_image_brief: 1-2 câu tiếng Anh thật cụ thể, nêu đúng nhân vật + bối cảnh + biểu tượng + cú twist; dùng như khóa chống prompt bị generic.\\n\\n'\n        '======== THUMBNAIL PROMPT ========\\n'\n        'Viết thumbnail_prompt bằng tiếng Anh, >=100 từ, Flux-friendly, cinematic 16:9. Prompt này chỉ để tham khảo; code sẽ dựng lại final prompt từ các field phân tích. Bắt buộc có:\\n'\n        '- left 40 percent clean dark negative space for Vietnamese overlay text, no text in image.\\n'\n        '- right 60 percent contains protagonist close-up with strong readable emotion.\\n'\n        '- antagonist/protector shown only nếu đúng truyện; nếu không có protector thì không bịa.\\n'\n        '- scene, props, weather, architecture, clothing, age cues phải theo truyện.\\n'\n        '- clear hierarchy, sharp faces, dramatic rim light, warm/cool contrast, professional Chinese period drama poster.\\n\\n'\n        '======== BACKGROUND PROMPT ========\\n'\n        'Viết background_prompt bằng tiếng Anh, >=90 từ, Flux-friendly, cinematic 16:9. Prompt này chỉ để tham khảo; code sẽ dựng lại final prompt từ các field phân tích. Bắt buộc có:\\n'\n        '- calm storytelling background, no text in image.\\n'\n        '- use background_scene and primary_setting from this story, not a generic palace if story says another place.\\n'\n        '- include 4-6 key_objects as foreground symbols on a table, window ledge, shrine, bed, courtyard floor, boat, battlefield ground... chọn vị trí hợp truyện.\\n'\n        '- leave darker uncluttered subtitle space in the middle-bottom.\\n'\n        '- painterly matte painting, atmospheric depth, warm interior light vs cool outdoor light when possible.\\n\\n'\n        '======== NEGATIVE PROMPTS ========\\n'\n        'thumbnail_negative và background_negative nên gồm: \"' + COMMON_NEGATIVE + '\".\\n\\n'\n        '======== VIDEO TITLES ========\\n'\n        '20 tiêu đề tiếng Việt 45-75 ký tự, tò mò, có cú twist, không phản cảm, không lặp ý.\\n\\n'\n        '======== STRICT JSON SCHEMA ========\\n'\n        '{\\n'\n        '  \"story_summary\": \"5 dòng VN\",\\n'\n        '  \"emotional_hook\": \"...\",\\n'\n        '  \"protagonist\": \"...\",\\n'\n        '  \"antagonist\": \"...\",\\n'\n        '  \"protector\": \"... hoặc null\",\\n'\n        '  \"primary_setting\": \"...\",\\n'\n        '  \"key_objects\": [\"5-8 symbols\"],\\n'\n        '  \"thumbnail_scene\": \"...\",\\n'\n        '  \"background_scene\": \"...\",\\n'\n        '  \"color_palette\": \"...\",\\n'\n        '  \"story_image_brief\": \"1-2 câu EN khóa chặt đúng nhân vật, bối cảnh, biểu tượng, twist để đưa trực tiếp vào Flux prompt\",\\n'\n        '  \"thumbnail_prompt\": \"English Flux prompt\",\\n'\n        '  \"thumbnail_negative\": \"...\",\\n'\n        '  \"background_prompt\": \"English Flux prompt\",\\n'\n        '  \"background_negative\": \"...\",\\n'\n        '  \"thumbnail_text\": \"3-8 từ VN gây tò mò, không quá dài\",\\n'\n        '  \"background_text\": \"1 câu VN ngắn\",\\n'\n        '  \"story_title_vi\": \"<= 60 ký tự\",\\n'\n        '  \"video_titles\": [\"20 tiêu đề VN\"]\\n'\n        '}\\n\\n'\n        'TRUYỆN MẪU:\\n' + sample)\n\ntry:\n    body = json.dumps({\n        'model': MODEL,\n        'messages': [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': USER}],\n        'temperature': 0.55, 'max_tokens': 6500,\n        'chat_template_kwargs': {'enable_thinking': False},\n        'response_format': {'type': 'json_object'},\n    }).encode('utf-8')\n    rq = urllib.request.Request(VLLM_URL, data=body, headers=VLLM_HDRS)\n    with urllib.request.urlopen(rq, timeout=600) as r:\n        d = json.loads(r.read())\n    raw = d['choices'][0]['message'].get('content') or ''\n    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.S)\n    m = re.search(r'\\{.*\\}', raw, re.S)\n    prompts = json.loads(m.group(0)) if m else {}\n    prompts = ensure_prompt(prompts, slug)\nexcept Exception as e:\n    return [{'json': {'success': False, 'stage': 'generate_prompts', 'slug': slug, 'error': f'llm_failed: {type(e).__name__}: {e}'}}]\n\nllm_thumb_prompt = text_value(prompts.get('thumbnail_prompt'), '')\nllm_bg_prompt = text_value(prompts.get('background_prompt'), '')\nthumb_prompt, bg_prompt = build_story_prompts(prompts)\nprompts['thumbnail_prompt_llm_reference'] = llm_thumb_prompt\nprompts['background_prompt_llm_reference'] = llm_bg_prompt\nprompts['thumbnail_prompt'] = thumb_prompt\nprompts['background_prompt'] = bg_prompt\nthumb_text = text_value(prompts.get('thumbnail_text'), '')\nbg_text = text_value(prompts.get('background_text'), '')\ntitle = text_value(prompts.get('story_title_vi'), '')\n\n# Save prompts + text overlay to MinIO\nprompts_json = json.dumps(prompts, ensure_ascii=False, indent=2).encode('utf-8')\ns3_put(output_bucket, f'{slug}/prompts.json', prompts_json, 'application/json')\n\nvideo_titles = prompts.get('video_titles') or []\nif not isinstance(video_titles, list):\n    video_titles = []\nvideo_titles = [str(t).strip() for t in video_titles if str(t).strip()]\n\nstory_summary = text_value(prompts.get('story_summary'), '')\nemotional_hook = text_value(prompts.get('emotional_hook'), '')\nprimary_setting = text_value(prompts.get('primary_setting'), '')\nkey_objects = ', '.join(clean_list(prompts.get('key_objects'), 8))\noverlay_txt = (\n    f'# Slug: {slug}\\n' +\n    f'# Title: {title}\\n\\n' +\n    f'## STORY SUMMARY\\n{story_summary}\\n\\n' +\n    f'## EMOTIONAL HOOK\\n{emotional_hook}\\n\\n' +\n    f'## PRIMARY SETTING\\n{primary_setting}\\n\\n' +\n    f'## KEY OBJECTS\\n{key_objects}\\n\\n' +\n    f'## THUMBNAIL TEXT (đặt lên ảnh thumbnail)\\n{thumb_text}\\n\\n' +\n    f'## BACKGROUND TEXT (đặt lên ảnh background)\\n{bg_text}\\n\\n' +\n    f'## VIDEO TITLES ({len(video_titles)} gợi ý)\\n' +\n    '\\n'.join(f'{i+1}. {t}' for i, t in enumerate(video_titles)) + '\\n'\n).encode('utf-8')\ns3_put(output_bucket, f'{slug}/text_overlay.txt', overlay_txt, 'text/plain; charset=utf-8')\n\n# Lưu titles riêng cho dễ copy\ntitles_txt = '\\n'.join(video_titles).encode('utf-8')\ns3_put(output_bucket, f'{slug}/video_titles.txt', titles_txt, 'text/plain; charset=utf-8')\n\n# Build full Flux prompts with style. Keep overlay text out of generated images.\nthumb_neg = text_value(prompts.get('thumbnail_negative'), COMMON_NEGATIVE)\nbg_neg = text_value(prompts.get('background_negative'), COMMON_NEGATIVE)\nstory_lock = text_value(prompts.get('story_image_brief'), '')\nanalysis_lock = (\n    'FIRST PRIORITY: match this exact story, not a generic Chinese period scene. ' +\n    ('Story lock: ' + story_lock + '. ' if story_lock else '') +\n    ('Emotional hook: ' + emotional_hook + '. ' if emotional_hook else '') +\n    ('Primary setting: ' + primary_setting + '. ' if primary_setting else '') +\n    ('Required story symbols: ' + key_objects + '. ' if key_objects else '')\n)\nthumb_full = analysis_lock + thumb_prompt + ', ' + style + ', no text in image, leave clean empty space for later text overlay, avoid: ' + thumb_neg\nbg_full = analysis_lock + bg_prompt + ', ' + style + ', no text in image, subtitle-safe dark empty lower-middle area, avoid: ' + bg_neg\n\nreturn [{'json': {\n    'slug': slug,\n    'output_bucket': output_bucket,\n    'index': p.get('index'),\n    'total': p.get('total'),\n    'thumb_prompt_full': thumb_full,\n    'bg_prompt_full': bg_full,\n    'thumb_w': thumb_w, 'thumb_h': thumb_h,\n    'bg_w': bg_w, 'bg_h': bg_h,\n    'title': title,\n}}]"
+      },
+      "id": "node-prompts",
+      "name": "Generate Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import json, os, time, uuid, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nif p.get('skipped'):\n    return [{'json': p}]\nif p.get('success') is False or p.get('error'):\n    p['stage'] = p.get('stage') or 'generate_prompts'\n    p['image_generation_skipped'] = True\n    p['image_generation_skip_reason'] = 'upstream_error'\n    return [{'json': p}]\nslug = p.get('slug')\noutput_bucket = p.get('output_bucket', 'mottruyen-thumnail-background')\n\nif not slug:\n    return [{'json': {'success': False, 'stage': 'generate_images', 'error': 'missing_slug', 'input': p}}]\nif not p.get('thumb_prompt_full') or not p.get('bg_prompt_full'):\n    return [{'json': {\n        **p,\n        'success': False,\n        'stage': 'generate_images',\n        'error': 'missing_flux_prompts',\n        'missing': [k for k in ('thumb_prompt_full', 'bg_prompt_full') if not p.get(k)],\n    }}]\n\nthumb_w = int(p.get('thumb_w') or p.get('thumb_width') or 1280)\nthumb_h = int(p.get('thumb_h') or p.get('thumb_height') or 720)\nbg_w = int(p.get('bg_w') or p.get('bg_width') or 1920)\nbg_h = int(p.get('bg_h') or p.get('bg_height') or 1088)\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\nCOMFY = 'http://comfyui:8188'\n\ndef _sign(method, bucket, key='', qs='', payload=b''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    ph = hashlib.sha256(payload).hexdigest() if payload else 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    cu = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    ch = f'host:{host}\\nx-amz-content-sha256:{ph}\\nx-amz-date:{amzdate}\\n'\n    sh = 'host;x-amz-content-sha256;x-amz-date'\n    cr = f'{method}\\n{cu}\\n{qs}\\n{ch}\\n{sh}\\n{ph}'\n    cs = f'{datestamp}/{region}/s3/aws4_request'\n    sts = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{cs}\\n{hashlib.sha256(cr.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    kd = _s(('AWS4' + secret_key).encode(), datestamp); kr = _s(kd, region); ks = _s(kr, 's3'); ksi = _s(ks, 'aws4_request')\n    sig = hmac.new(ksi, sts.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{cs}, SignedHeaders={sh}, Signature={sig}'\n    return f'{endpoint}{cu}' + (f'?{qs}' if qs else ''), {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': ph, 'Authorization': auth}\n\ndef s3_put(bucket, key, data, ct='application/octet-stream'):\n    url, h = _sign('PUT', bucket, key=key, payload=data)\n    h['Content-Type'] = ct\n    with urllib.request.urlopen(urllib.request.Request(url, data=data, method='PUT', headers=h), timeout=180) as r:\n        return r.status\n\ndef build_flux_wf(prompt, width, height, seed, filename_prefix):\n    return {\n        '1': {'class_type': 'UNETLoader', 'inputs': {'unet_name': 'flux1-dev.safetensors', 'weight_dtype': 'default'}},\n        '2': {'class_type': 'DualCLIPLoader', 'inputs': {'clip_name1': 'clip_l.safetensors', 'clip_name2': 't5xxl_fp16.safetensors', 'type': 'flux', 'device': 'default'}},\n        '3': {'class_type': 'VAELoader', 'inputs': {'vae_name': 'ae.safetensors'}},\n        '4': {'class_type': 'CLIPTextEncode', 'inputs': {'clip': ['2', 0], 'text': prompt}},\n        '5': {'class_type': 'FluxGuidance', 'inputs': {'conditioning': ['4', 0], 'guidance': 3.5}},\n        '6': {'class_type': 'EmptyLatentImage', 'inputs': {'width': width, 'height': height, 'batch_size': 1}},\n        '7': {'class_type': 'ConditioningZeroOut', 'inputs': {'conditioning': ['4', 0]}},\n        '8': {'class_type': 'KSampler', 'inputs': {'model': ['1', 0], 'positive': ['5', 0], 'negative': ['7', 0], 'latent_image': ['6', 0], 'seed': seed, 'steps': 20, 'cfg': 1.0, 'sampler_name': 'euler', 'scheduler': 'normal', 'denoise': 1.0}},\n        '9': {'class_type': 'VAEDecode', 'inputs': {'samples': ['8', 0], 'vae': ['3', 0]}},\n        '10': {'class_type': 'SaveImage', 'inputs': {'images': ['9', 0], 'filename_prefix': filename_prefix}}\n    }\n\ndef comfy_run(wf, timeout_s=600):\n    body = json.dumps({'prompt': wf, 'client_id': str(uuid.uuid4())}).encode()\n    rq = urllib.request.Request(f'{COMFY}/prompt', data=body, headers={'Content-Type': 'application/json'})\n    with urllib.request.urlopen(rq, timeout=30) as r:\n        resp = json.loads(r.read())\n    pid = resp.get('prompt_id')\n    if not pid: return None\n    deadline = time.time() + timeout_s\n    while time.time() < deadline:\n        time.sleep(4)\n        with urllib.request.urlopen(f'{COMFY}/history/{pid}', timeout=15) as r:\n            h = json.loads(r.read())\n        if pid in h:\n            return h[pid].get('outputs', {})\n    return None\n\ndef comfy_fetch(filename, subfolder=''):\n    url = f\"{COMFY}/view?filename={urllib.parse.quote(filename)}&subfolder={urllib.parse.quote(subfolder)}&type=output\"\n    with urllib.request.urlopen(url, timeout=120) as r:\n        return r.read()\n\nresult = {'slug': slug, 'output_bucket': output_bucket, 'index': p.get('index'), 'total': p.get('total'), 'title': p.get('title')}\n\n# Generate thumbnail\nseed_t = abs(hash(slug + 'thumb')) % 2**31\nwf_t = build_flux_wf(p.get('thumb_prompt_full', ''), thumb_w, thumb_h, seed_t, f'thumbs/{slug}/thumbnail')\ntry:\n    outs = comfy_run(wf_t, timeout_s=600)\n    img_bytes = None\n    if outs:\n        for nid, out in outs.items():\n            if 'images' in out and out['images']:\n                fi = out['images'][0]\n                img_bytes = comfy_fetch(fi['filename'], fi.get('subfolder', ''))\n                break\n    if img_bytes:\n        s3_put(output_bucket, f'{slug}/thumbnail.png', img_bytes, 'image/png')\n        result['thumbnail_size'] = len(img_bytes)\n        result['thumbnail_key'] = f'{output_bucket}/{slug}/thumbnail.png'\n    else:\n        result['thumbnail_error'] = 'no_image'\nexcept Exception as e:\n    result['thumbnail_error'] = f'{type(e).__name__}: {e}'\n\n# Generate background\nseed_b = abs(hash(slug + 'bg')) % 2**31\nwf_b = build_flux_wf(p.get('bg_prompt_full', ''), bg_w, bg_h, seed_b, f'thumbs/{slug}/background')\ntry:\n    outs = comfy_run(wf_b, timeout_s=600)\n    img_bytes = None\n    if outs:\n        for nid, out in outs.items():\n            if 'images' in out and out['images']:\n                fi = out['images'][0]\n                img_bytes = comfy_fetch(fi['filename'], fi.get('subfolder', ''))\n                break\n    if img_bytes:\n        s3_put(output_bucket, f'{slug}/background.png', img_bytes, 'image/png')\n        result['background_size'] = len(img_bytes)\n        result['background_key'] = f'{output_bucket}/{slug}/background.png'\n    else:\n        result['background_error'] = 'no_image'\nexcept Exception as e:\n    result['background_error'] = f'{type(e).__name__}: {e}'\n\nresult['success'] = bool(result.get('thumbnail_key') and result.get('background_key'))\nreturn [{'json': result}]"
+      },
+      "id": "node-flux",
+      "name": "Generate Images (Flux)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Params": {
+      "main": [
+        [
+          {
+            "node": "List Slugs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Slugs": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Slugs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Slugs": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Generate Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Prompts": {
+      "main": [
+        [
+          {
+            "node": "Generate Images (Flux)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Images (Flux)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Slugs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

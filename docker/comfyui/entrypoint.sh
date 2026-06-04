@@ -18,4 +18,11 @@ if [ -d "$SEED_DIR" ]; then
     done
 fi
 
+# Auto-download model còn thiếu (idempotent — skip file đã đủ size).
+# Đặt AUTO_DOWNLOAD_MODELS=0 trong env để skip.
+if [ "${AUTO_DOWNLOAD_MODELS:-1}" = "1" ] && [ -x /app/scripts/download-models.sh ]; then
+    echo "[entrypoint] checking models…"
+    bash /app/scripts/download-models.sh || echo "[entrypoint] WARN: download script failed, continuing"
+fi
+
 exec "$@"

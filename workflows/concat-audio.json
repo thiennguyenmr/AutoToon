@@ -1,0 +1,76 @@
+{
+  "id": "concat-audio",
+  "name": "Concat Audio (per slug, batch)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trig-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"id": "p1", "name": "audio_bucket", "value": "mottruyen-audio", "type": "string"},
+            {"id": "p2", "name": "output_suffix", "value": "_full.wav", "type": "string"},
+            {"id": "p3", "name": "slug_filter", "value": "", "type": "string"},
+            {"id": "p4", "name": "max_slugs", "value": 0, "type": "number"},
+            {"id": "p5", "name": "pause_ms", "value": 350, "type": "number"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import os, re, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\naudio_bucket = p.get('audio_bucket', 'mottruyen-audio')\nslug_filter = (p.get('slug_filter') or '').strip()\nmax_slugs = int(p.get('max_slugs') or 0)\noutput_suffix = p.get('output_suffix', '_full.wav')\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef _sign(method, bucket, key='', qs=''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    empty_hash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    canonical_uri = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{empty_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'{method}\\n{canonical_uri}\\n{qs}\\n{canonical_headers}\\n{signed_headers}\\n{empty_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _s(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _s(k_date, region); k_service = _s(k_region, 's3'); k_signing = _s(k_service, 'aws4_request')\n    sig = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={sig}'\n    url = f'{endpoint}{canonical_uri}' + (f'?{qs}' if qs else '')\n    return url, {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': empty_hash, 'Authorization': auth}\n\ndef s3_list_prefixes(bucket, prefix):\n    qs_pairs = [('delimiter', '/'), ('list-type', '2'), ('prefix', prefix)]\n    qs = '&'.join(f'{urllib.parse.quote(k, safe=\"\")}={urllib.parse.quote(v, safe=\"\")}' for k, v in qs_pairs)\n    url, headers = _sign('GET', bucket, qs=qs)\n    rq = urllib.request.Request(url, headers=headers)\n    with urllib.request.urlopen(rq, timeout=60) as resp:\n        return resp.read().decode('utf-8')\n\nxml = s3_list_prefixes(audio_bucket, '')\nprefixes = re.findall(r'<Prefix>([^<]+)</Prefix>', xml)\nslugs = []\nfor pf in prefixes:\n    name = pf.rstrip('/')\n    if not name or '/' in name or name.startswith('.'): continue\n    slugs.append(name)\n\nif slug_filter:\n    slugs = [s for s in slugs if s == slug_filter]\nif max_slugs > 0:\n    slugs = slugs[:max_slugs]\n\nif not slugs:\n    return [{'json': {'status': 'no_slugs', 'audio_bucket': audio_bucket}}]\n\npause_ms = int(p.get('pause_ms') or 350)\nreturn [{'json': {\n    'slug': s,\n    'index': i + 1,\n    'total': len(slugs),\n    'audio_bucket': audio_bucket,\n    'output_suffix': output_suffix,\n    'pause_ms': pause_ms,\n}} for i, s in enumerate(slugs)]"
+      },
+      "id": "node-list",
+      "name": "List Slugs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-1",
+      "name": "Loop Over Slugs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import os, re, io, wave, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom urllib.parse import urlparse\n\np = _items[0]['json']\nslug = p.get('slug')\nif not slug:\n    return [{'json': {'success': False, 'error': 'no slug'}}]\naudio_bucket = p.get('audio_bucket', 'mottruyen-audio')\noutput_suffix = p.get('output_suffix', '_full.wav')\npause_ms = int(p.get('pause_ms') or 350)\noutput_key = f'{slug}/{slug}{output_suffix}'\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef _sign(method, bucket, key='', qs='', payload_hash=None):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    ph = payload_hash or 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    canonical_uri = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{ph}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'{method}\\n{canonical_uri}\\n{qs}\\n{canonical_headers}\\n{signed_headers}\\n{ph}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _s(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _s(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _s(k_date, region); k_service = _s(k_region, 's3'); k_signing = _s(k_service, 'aws4_request')\n    sig = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={sig}'\n    url = f'{endpoint}{canonical_uri}' + (f'?{qs}' if qs else '')\n    return url, {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': ph, 'Authorization': auth}\n\ndef s3_get(bucket, key):\n    url, headers = _sign('GET', bucket, key=key)\n    rq = urllib.request.Request(url, headers=headers)\n    with urllib.request.urlopen(rq, timeout=120) as resp:\n        return resp.read()\n\ndef s3_head(bucket, key):\n    url, headers = _sign('HEAD', bucket, key=key)\n    rq = urllib.request.Request(url, method='HEAD', headers=headers)\n    try:\n        with urllib.request.urlopen(rq, timeout=30) as resp:\n            return int(resp.headers.get('Content-Length') or 0)\n    except urllib.error.HTTPError as e:\n        if e.code == 404: return None\n        raise\n\ndef s3_list_keys(bucket, prefix):\n    qs = f'list-type=2&prefix={urllib.parse.quote(prefix, safe=\"\")}'\n    url, headers = _sign('GET', bucket, qs=qs)\n    rq = urllib.request.Request(url, headers=headers)\n    with urllib.request.urlopen(rq, timeout=60) as resp:\n        return resp.read().decode('utf-8')\n\ndef s3_put(bucket, key, data, content_type='application/octet-stream'):\n    ph = hashlib.sha256(data).hexdigest()\n    url, headers = _sign('PUT', bucket, key=key, payload_hash=ph)\n    headers['Content-Type'] = content_type\n    rq = urllib.request.Request(url, data=data, method='PUT', headers=headers)\n    with urllib.request.urlopen(rq, timeout=300) as resp:\n        return resp.status\n\n# Skip nếu output đã tồn tại\nexisting = s3_head(audio_bucket, output_key)\nif existing and existing > 0:\n    return [{'json': {'success': True, 'slug': slug, 'skipped': True, 'reason': 'already_concated', 'output': f'{audio_bucket}/{output_key}', 'size': existing}}]\n\n# Đọc concat.txt để biết thứ tự WAV; nếu không có, fallback list seg_*.wav sort tự nhiên\nordered_keys = []\ntry:\n    concat_txt = s3_get(audio_bucket, f'{slug}/concat.txt').decode('utf-8')\n    for line in concat_txt.split('\\n'):\n        m = re.match(r\"file\\s+'([^']+)'\", line.strip())\n        if m:\n            ordered_keys.append(f'{slug}/{m.group(1)}')\nexcept Exception:\n    pass\n\nif not ordered_keys:\n    xml = s3_list_keys(audio_bucket, f'{slug}/')\n    all_keys = re.findall(r'<Key>([^<]+)</Key>', xml)\n    seg_keys = [k for k in all_keys if re.search(r'/seg_\\d+_', k) and k.endswith('.wav')]\n    seg_keys.sort()\n    ordered_keys = seg_keys\n\nif not ordered_keys:\n    return [{'json': {'success': False, 'slug': slug, 'error': 'no_wav_files', 'bucket': audio_bucket}}]\n\n# Concat WAVs bằng wave stdlib (yêu cầu cùng sample rate / channels / sample width)\n# Chèn silence pause_ms ms giữa các segment để tạo khoảng nghỉ tự nhiên\nout_buf = io.BytesIO()\nfirst = True\nparams = None\nframe_count = 0\nsilence_bytes = b''\nfailed = []\nwith wave.open(out_buf, 'wb') as w_out:\n    for ki, key in enumerate(ordered_keys):\n        try:\n            wav_bytes = s3_get(audio_bucket, key)\n            with wave.open(io.BytesIO(wav_bytes), 'rb') as w_in:\n                p_in = w_in.getparams()\n                if first:\n                    w_out.setparams(p_in)\n                    params = p_in\n                    first = False\n                    # Tính silence buffer 1 lần: pause_ms × sample_rate × sample_width × channels\n                    silence_frames = int(params.framerate * pause_ms / 1000)\n                    silence_bytes = b'\\x00' * (silence_frames * params.sampwidth * params.nchannels)\n                elif (p_in.nchannels, p_in.sampwidth, p_in.framerate) != (params.nchannels, params.sampwidth, params.framerate):\n                    failed.append({'key': key, 'reason': f'format_mismatch sr={p_in.framerate} ch={p_in.nchannels}'})\n                    continue\n                # Chèn silence trước segment thứ 2 trở đi (không trước segment đầu)\n                if ki > 0 and silence_bytes:\n                    w_out.writeframes(silence_bytes)\n                    frame_count += silence_frames\n                frames = w_in.readframes(w_in.getnframes())\n                w_out.writeframes(frames)\n                frame_count += w_in.getnframes()\n        except Exception as e:\n            failed.append({'key': key, 'reason': f'{type(e).__name__}: {e}'})\n\nif first:  # không file nào ghép được\n    return [{'json': {'success': False, 'slug': slug, 'error': 'no_valid_wav', 'failed': failed[:10]}}]\n\nout_data = out_buf.getvalue()\ns3_put(audio_bucket, output_key, out_data, 'audio/wav')\n\nduration_s = frame_count / params.framerate if params else 0\nreturn [{'json': {\n    'success': True,\n    'slug': slug,\n    'index': p.get('index'),\n    'total': p.get('total'),\n    'output': f'{audio_bucket}/{output_key}',\n    'size_bytes': len(out_data),\n    'duration_seconds': round(duration_s, 1),\n    'segments_concated': len(ordered_keys) - len(failed),\n    'pause_ms_between': pause_ms,\n    'failed_count': len(failed),\n    'failed': failed[:5] if failed else None,\n    'sample_rate': params.framerate if params else None,\n    'channels': params.nchannels if params else None,\n}}]"
+      },
+      "id": "node-concat",
+      "name": "Concat Slug",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {"main": [[{"node": "Set Params", "type": "main", "index": 0}]]},
+    "Set Params": {"main": [[{"node": "List Slugs", "type": "main", "index": 0}]]},
+    "List Slugs": {"main": [[{"node": "Loop Over Slugs", "type": "main", "index": 0}]]},
+    "Loop Over Slugs": {"main": [[], [{"node": "Concat Slug", "type": "main", "index": 0}]]},
+    "Concat Slug": {"main": [[{"node": "Loop Over Slugs", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,208 @@
+{
+  "id": "crawl-vivutruyen-full",
+  "name": "Vivutruyen \u2014 Crawl vivutruyen2.net (FULL — all stories)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "manga_limit",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "a2",
+              "name": "chapters_per_manga_limit",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "delay",
+              "value": 1,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Set Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import sys, re\n\nsys.path.insert(0, '/data/scripts')\nimport crawl_vivutruyen as cm\n\nparams = _items[0]['json']\nmanga_limit = int(params.get('manga_limit') or 0)\nchapters_per_manga_limit = int(params.get('chapters_per_manga_limit') or 0)\ndelay = float(params.get('delay') or 1.0)\n\n# Bỏ qua các slug không phải truyện (trang tĩnh, chuyên mục...).\nnon_story = {'chap', 'truyen', 'the-loai', 'tac-gia', 'tim-kiem', 'lien-he'}\n\nindex_xml = cm.http_request(f'{cm.BASE_URL}/sitemap_index.xml')\nsitemaps = [u for u in re.findall(r'<loc>([^<]+)</loc>', index_xml) if 'post-sitemap' in u]\n\nslugs = []\nseen = set()\nfor sm in sitemaps:\n    xml = cm.http_request(sm)\n    for u in re.findall(r'<loc>([^<]+)</loc>', xml):\n        m = re.match(r'https?://[^/]+/([a-z0-9-]+)/?$', u)\n        if not m:\n            continue\n        slug = m.group(1)\n        if slug in seen or slug in non_story:\n            continue\n        seen.add(slug)\n        slugs.append(slug)\n    if manga_limit > 0 and len(slugs) >= manga_limit:\n        break\n\nif manga_limit > 0:\n    slugs = slugs[:manga_limit]\n\nreturn [{'json': {\n    'slug': slug,\n    'index': i + 1,\n    'total': len(slugs),\n    'chapters_per_manga_limit': chapters_per_manga_limit,\n    'delay': delay,\n}} for i, slug in enumerate(slugs)]\n"
+      },
+      "id": "list-1",
+      "name": "List Manga (sitemap)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-1",
+      "name": "Loop Over Manga",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForEachItem",
+        "pythonCode": "import sys, io, contextlib, re\nfrom pathlib import Path\n\nsys.path.insert(0, '/data/scripts')\nimport crawl_vivutruyen as cm\n\nparams = _item['json']\nslug = params['slug']\nout_dir = Path('/data/crawl-output') / slug\ndelay = float(params.get('delay') or 1.0)\nlimit_raw = params.get('chapters_per_manga_limit')\nlimit = int(limit_raw) if limit_raw and int(limit_raw) > 0 else None\n\nbuf = io.StringIO()\ntry:\n    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):\n        cm.crawl(slug, out_dir, delay, limit)\n    error = None\nexcept Exception as exc:\n    error = f'{type(exc).__name__}: {exc}'\n\nlog = buf.getvalue()\ntotal_match = re.search(r'Tìm thấy (\\d+) chương', log)\ncrawled = len(re.findall(r'^\\[>\\] ', log, flags=re.M))\nskipped = len(re.findall(r'^\\[=\\] ', log, flags=re.M))\nfailed = len(re.findall(r'^\\s*! Lỗi:', log, flags=re.M))\n\nreturn {\n    'success': error is None,\n    'error': error,\n    'slug': slug,\n    'index': params.get('index'),\n    'total': params.get('total'),\n    'out_dir': str(out_dir),\n    'total_chapters': int(total_match.group(1)) if total_match else None,\n    'crawled_now': crawled,\n    'skipped_existing': skipped,\n    'failed': failed,\n    'log_tail': log[-1000:],\n}\n"
+      },
+      "id": "crawler-1",
+      "name": "Run Crawler (per manga)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForEachItem",
+        "pythonCode": "import os, re, sys, hmac, hashlib, datetime, unicodedata, urllib.request, urllib.parse\nfrom pathlib import Path\nfrom urllib.parse import urlparse\n\nsys.path.insert(0, '/data/scripts')\nimport crawl_vivutruyen as cm\n\nprev = _item['json']\nif not prev.get('success'):\n    return {'success': False, 'error': 'crawler failed', 'crawler_result': prev}\n\nslug = prev['slug']\nout_dir = Path(prev['out_dir'])\n\ndef vn_slug(s):\n    s = unicodedata.normalize('NFKD', s)\n    s = ''.join(c for c in s if not unicodedata.combining(c))\n    s = s.replace('đ', 'd').replace('Đ', 'D').lower()\n    s = re.sub(r'\\s+', '-', s.strip())\n    s = re.sub(r'[^a-z0-9\\-_.]', '', s)\n    s = re.sub(r'-+', '-', s).strip('-.')\n    return s\n\ntitle = slug\ngenres = []\ntry:\n    main_html = cm.http_request(f'{cm.BASE_URL}/{slug}/')\n    m = re.search(r'<meta\\s+property=\"og:title\"[^>]*content=\"([^\"]+)\"', main_html, re.I)\n    if m:\n        title = re.split(r'\\s+-\\s+vivutruyen', m.group(1))[0].strip()\n    genres = [g.strip() for g in re.findall(r'<a[^>]*rel=\"category tag\"[^>]*>([^<]+)</a>', main_html, re.I) if g.strip()]\nexcept Exception:\n    pass\n\nfolder = vn_slug(title) or slug\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nbucket = 'vivutruyen'\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\n\ndef s3_put(key, body, content_type, target_bucket=bucket):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(body).hexdigest()\n    canonical_uri = '/' + target_bucket + '/' + urllib.parse.quote(key, safe='/')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'PUT\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'{algorithm}\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    url = f'{endpoint}{canonical_uri}'\n    req = urllib.request.Request(url, data=body, method='PUT', headers={\n        'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash,\n        'Authorization': auth, 'Content-Type': content_type,\n    })\n    with urllib.request.urlopen(req, timeout=60) as resp:\n        return resp.status\n\nuploaded, errors = [], []\nfor f in sorted(out_dir.glob('*.txt')):\n    body = f.read_bytes()\n    key = f'{folder}/{f.name}'\n    try:\n        status = s3_put(key, body, 'text/plain; charset=utf-8')\n        uploaded.append({'key': key, 'size': len(body), 'status': status})\n    except Exception as e:\n        errors.append({'file': f.name, 'error': f'{type(e).__name__}: {e}'})\n\nreturn {\n    'success': len(errors) == 0 and len(uploaded) > 0,\n    'slug': slug,\n    'index': prev.get('index'),\n    'total': prev.get('total'),\n    'title': title,\n    'genres': genres,\n    'folder': folder,\n    'out_dir': str(out_dir),\n    'bucket': bucket,\n    'uploaded_count': len(uploaded),\n    'failed_count': len(errors),\n    'errors': errors,\n}\n"
+      },
+      "id": "upload-1",
+      "name": "Upload to MinIO (per manga)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "mode": "runOnceForEachItem",
+        "pythonCode": "import os, re, json, hmac, hashlib, datetime, urllib.parse, urllib.request\nfrom pathlib import Path\nfrom urllib.parse import urlparse\n\nprev = _item['json']\nif not prev.get('success'):\n    return {'success': False, 'error': 'upload failed', 'upload_result': prev}\n\nslug = prev.get('slug')\nfolder = prev['folder']\ntitle = (prev.get('title') or slug).strip()\ngenres = prev.get('genres') or []\nout_dir = Path(prev['out_dir'])\n\nendpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')\naccess_key = os.environ['MINIO_ACCESS_KEY']\nsecret_key = os.environ['MINIO_SECRET_KEY']\nregion = os.environ.get('MINIO_REGION', 'us-east-1')\ntarget_bucket = 'vivutruyen-refactored'\n\nvllm_url = os.environ.get('VLLM_BASE_URL', 'http://vllm:8000/v1').rstrip('/') + '/chat/completions'\nvllm_key = os.environ.get('VLLM_API_KEY', 'vllm-local')\nmodel = os.environ.get('VLLM_MODEL', 'Qwen/Qwen3.6-35B-A3B-FP8')\n\n# Chunk size theo ký tự. Qwen3.6 max-model-len 32k token; input + output phải vừa.\nCHUNK_CHARS = int(os.environ.get('REFACTOR_CHUNK_CHARS', '12000'))\n\ncache_dir = out_dir / '_refactored'\ncache_dir.mkdir(parents=True, exist_ok=True)\n\n\ndef _sign_headers(method, bucket, key='', payload=b''):\n    parsed = urlparse(endpoint); host = parsed.netloc\n    now = datetime.datetime.now(datetime.UTC)\n    amzdate = now.strftime('%Y%m%dT%H%M%SZ'); datestamp = now.strftime('%Y%m%d')\n    payload_hash = hashlib.sha256(payload).hexdigest() if payload else 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'\n    canonical_uri = '/' + bucket + ('/' + urllib.parse.quote(key, safe='/') if key else '')\n    canonical_headers = f'host:{host}\\nx-amz-content-sha256:{payload_hash}\\nx-amz-date:{amzdate}\\n'\n    signed_headers = 'host;x-amz-content-sha256;x-amz-date'\n    canonical_request = f'{method}\\n{canonical_uri}\\n\\n{canonical_headers}\\n{signed_headers}\\n{payload_hash}'\n    credential_scope = f'{datestamp}/{region}/s3/aws4_request'\n    string_to_sign = f'AWS4-HMAC-SHA256\\n{amzdate}\\n{credential_scope}\\n{hashlib.sha256(canonical_request.encode()).hexdigest()}'\n    def _sign(k, m): return hmac.new(k, m.encode(), hashlib.sha256).digest()\n    k_date = _sign(('AWS4' + secret_key).encode(), datestamp)\n    k_region = _sign(k_date, region); k_service = _sign(k_region, 's3'); k_signing = _sign(k_service, 'aws4_request')\n    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()\n    auth = f'AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}'\n    headers = {'Host': host, 'X-Amz-Date': amzdate, 'X-Amz-Content-SHA256': payload_hash, 'Authorization': auth}\n    return f'{endpoint}{canonical_uri}', headers\n\n\ndef s3_put(bucket, key, body, content_type):\n    url, headers = _sign_headers('PUT', bucket, key=key, payload=body)\n    headers['Content-Type'] = content_type\n    rq = urllib.request.Request(url, data=body, method='PUT', headers=headers)\n    with urllib.request.urlopen(rq, timeout=180) as resp:\n        return resp.status\n\n\ndef s3_head(bucket, key):\n    url, headers = _sign_headers('HEAD', bucket, key=key)\n    rq = urllib.request.Request(url, method='HEAD', headers=headers)\n    try:\n        with urllib.request.urlopen(rq, timeout=30) as resp:\n            return int(resp.headers.get('Content-Length') or 0)\n    except urllib.error.HTTPError as e:\n        if e.code == 404:\n            return None\n        raise\n\n\ndef call_vllm(text):\n    system_msg = 'Bạn là biên tập viên truyện tiếng Việt. Chỉ trả về văn bản đã chỉnh, không thêm giải thích, không markdown.'\n    user_msg = ('Hãy biên tập đoạn truyện sau, áp dụng TẤT CẢ các quy tắc dưới đây:\\n'\n                '1. Sửa lỗi chính tả tiếng Việt (sai dấu, sai vần, viết tắt sai, gõ nhầm).\\n'\n                '2. XOÁ HOÀN TOÀN mọi tiêu đề chương: \"# Chương 1\", \"## Chương 2\", \"Chương 3:\", \"chương ba\", v.v.\\n'\n                '3. XOÁ HOÀN TOÀN mọi dòng phân cách kiểu \"====== Chương X ======\", \"--- Chương X ---\", \"===\", \"---\".\\n'\n                '4. XOÁ HOÀN TOÀN mọi số thứ tự đứng một mình trên dòng (01, 02, 10, ...).\\n'\n                '5. GHÉP các từ bị chèn dấu gạch nối kiểu né lọc kiểm duyệt: \"đ-ánh\" -> \"đánh\", \"m-ắng\" -> \"mắng\", \"ch-ết\" -> \"chết\", \"gi-ết\" -> \"giết\", v.v. Ghép thành 1 từ tiếng Việt hoàn chỉnh.\\n'\n                '6. GHÉP nội dung thành văn xuôi LIỀN MẠCH, giữa các đoạn dùng đúng 1 dòng trống.\\n'\n                '7. GIỮ NGUYÊN nội dung câu chuyện, GIỮ NGUYÊN dấu câu, GIỮ tên nhân vật.\\n'\n                '8. KHÔNG thêm tiêu đề mới, KHÔNG thêm dòng kẻ, KHÔNG thêm chương mới.\\n\\n'\n                'Đoạn cần biên tập:\\n' + text)\n    body = json.dumps({\n        'model': model,\n        'messages': [{'role': 'system', 'content': system_msg}, {'role': 'user', 'content': user_msg}],\n        'temperature': 0.1,\n        'max_tokens': 16000,\n        'chat_template_kwargs': {'enable_thinking': False},\n    }).encode('utf-8')\n    rq = urllib.request.Request(vllm_url, data=body, method='POST', headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {vllm_key}'})\n    with urllib.request.urlopen(rq, timeout=1200) as r:\n        d = json.loads(r.read())\n    choice = d['choices'][0]\n    return (choice['message'].get('content') or '').strip(), choice.get('finish_reason')\n\n\ndef pre_clean(text):\n    # 1. Xoá dòng phân cách ====== ... ====== hoặc ---\n    text = re.sub(r'\\n[=]{3,}[^\\n]*[=]{3,}\\n', '\\n\\n', text)\n    text = re.sub(r'\\n[-]{3,}[^\\n]*[-]{3,}\\n', '\\n\\n', text)\n    text = re.sub(r'^\\s*[=]{3,}\\s*$', '', text, flags=re.M)\n    text = re.sub(r'^\\s*[-]{3,}\\s*$', '', text, flags=re.M)\n    # 2. Xoá tiêu đề markdown # / ## ... cho chương\n    text = re.sub(r'^\\s*#+\\s*[^\\n]*chương[^\\n]*$', '', text, flags=re.M | re.I)\n    text = re.sub(r'^\\s*#+\\s*Ch[uươ]+ng\\s+[^\\n]*$', '', text, flags=re.M | re.I)\n    # 3. Xoá tiêu đề Chương trần (không có #)\n    text = re.sub(r'^\\s*Ch[uươ]+ng\\s+[\\dIVXivxLCMDlcmd]+[^\\n]*$', '', text, flags=re.M | re.I)\n    text = re.sub(r'^\\s*Ch[uươ]+ng\\s+[a-zA-ZÀ-ỹ]+[^\\n]*$', '', text, flags=re.M | re.I)\n    # 4. Xoá số thứ tự đứng riêng 1 dòng\n    text = re.sub(r'^\\s*\\d{1,4}\\s*$', '', text, flags=re.M)\n    # 5. Bỏ hyphen né kiểm duyệt: \"đ-ánh\" -> \"đánh\".\n    VN_VOWELS = 'aăâeêioôơuưyAĂÂEÊIOÔƠUƯYàáảãạắằẳẵặấầẩẫậèéẻẽẹếềểễệìíỉĩịòóỏõọốồổỗộớờởỡợùúủũụứừửữựỳýỷỹỵÀÁẢÃẠẮẰẲẴẶẤẦẨẪẬÈÉẺẼẸẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌỐỒỔỖỘỚỜỞỠỢÙÚỦŨỤỨỪỬỮỰỲÝỶỸỴ'\n    text = re.sub(r'(?<=[a-zA-ZđĐ])-(?=[' + VN_VOWELS + r'])', '', text)\n    # 6. Gộp nhiều dòng trống\n    text = re.sub(r'\\n{3,}', '\\n\\n', text)\n    return text.strip()\n\n\ndef chunk_text(text, max_chars):\n    paras = re.split(r'(\\n\\s*\\n)', text)\n    chunks = []\n    buf = ''\n    i = 0\n    while i < len(paras):\n        seg = paras[i]\n        if len(buf) + len(seg) <= max_chars:\n            buf += seg\n        else:\n            if buf:\n                chunks.append(buf); buf = ''\n            if len(seg) <= max_chars:\n                buf = seg\n            else:\n                sentences = re.split(r'(?<=[\\.\\!\\?…])\\s+', seg)\n                cur = ''\n                for s in sentences:\n                    if len(cur) + len(s) + 1 <= max_chars:\n                        cur = (cur + ' ' + s).strip()\n                    else:\n                        if cur:\n                            chunks.append(cur)\n                        cur = s\n                if cur:\n                    buf = cur\n        i += 1\n    if buf:\n        chunks.append(buf)\n    return [c for c in chunks if c.strip()]\n\n\ndef refactor_text(text):\n    cleaned = pre_clean(text)\n    chunks = chunk_text(cleaned, CHUNK_CHARS) if len(cleaned) > CHUNK_CHARS else [cleaned]\n    parts = []\n    errs = []\n    used_fallback = False\n    for idx, ch in enumerate(chunks):\n        new_text = ''\n        last_finish = None\n        try:\n            new_text, last_finish = call_vllm(ch)\n        except Exception as e:\n            errs.append({'chunk': idx + 1, 'stage': 'vllm', 'error': f'{type(e).__name__}: {e}'})\n        if not new_text:\n            errs.append({'chunk': idx + 1, 'stage': 'empty', 'finish': last_finish, 'note': 'fallback to original'})\n            new_text = ch\n            used_fallback = True\n        parts.append(new_text)\n    return pre_clean('\\n\\n'.join(parts)), errs, used_fallback\n\n\n# Skip cả truyện nếu đã refactor xong (_full.txt đã có trong bucket đích)\nfull_key = f'{folder}/{slug}_full.txt'\nexisting_full = s3_head(target_bucket, full_key)\nif existing_full and existing_full > 1024:\n    return {'success': True, 'slug': slug, 'index': prev.get('index'), 'total': prev.get('total'), 'folder': folder, 'title': title, 'skipped': True, 'reason': 'already_refactored', 'out': f'{target_bucket}/{full_key}', 'existing_size': existing_full}\n\nchapter_files = sorted([f for f in out_dir.glob('*.txt') if re.match(r'^\\d{3}-', f.name)])\nrefactored = []\nerrors = []\ncombined_parts = []\n\nfor f in chapter_files:\n    raw = f.read_text(encoding='utf-8')\n    cache_path = cache_dir / f.name\n    if cache_path.exists() and cache_path.stat().st_size > 0:\n        new_text = cache_path.read_text(encoding='utf-8')\n        cached = True\n    else:\n        new_text, errs, used_fallback = refactor_text(raw)\n        for e in errs:\n            e['file'] = f.name\n        errors.extend(errs)\n        # Chỉ cache khi vLLM thành công, để lần chạy sau retry chương lỗi.\n        if not used_fallback:\n            cache_path.write_text(new_text, encoding='utf-8')\n        cached = False\n    body = new_text.encode('utf-8')\n    key = f'{folder}/{f.name}'\n    try:\n        status = s3_put(target_bucket, key, body, 'text/plain; charset=utf-8')\n        refactored.append({'key': key, 'size': len(body), 'cached': cached, 'status': status})\n        combined_parts.append(new_text)\n    except Exception as e:\n        errors.append({'file': f.name, 'stage': 's3', 'error': f'{type(e).__name__}: {e}'})\n\nif combined_parts:\n    combined_text = '\\n\\n'.join(p.strip() for p in combined_parts).strip() + '\\n'\n    body = combined_text.encode('utf-8')\n    key = f'{folder}/{slug}_full.txt'\n    try:\n        status = s3_put(target_bucket, key, body, 'text/plain; charset=utf-8')\n        refactored.append({'key': key, 'size': len(body), 'combined': True, 'status': status})\n    except Exception as e:\n        errors.append({'file': '_full.txt', 'stage': 's3', 'error': f'{type(e).__name__}: {e}'})\n\n# Lưu tên truyện (tiếng Việt có dấu) + thể loại vào file txt riêng trong bucket refactored\ntry:\n    info_text = title + '\\nThể loại: ' + ', '.join(genres) + '\\n'\n    title_body = info_text.encode('utf-8')\n    tstatus = s3_put(target_bucket, f'{folder}/title.txt', title_body, 'text/plain; charset=utf-8')\n    refactored.append({'key': f'{folder}/title.txt', 'size': len(title_body), 'title_file': True, 'status': tstatus})\nexcept Exception as e:\n    errors.append({'file': 'title.txt', 'stage': 's3', 'error': f'{type(e).__name__}: {e}'})\n\nreturn {\n    'success': len(errors) == 0 and len(refactored) > 0,\n    'slug': slug,\n    'index': prev.get('index'),\n    'total': prev.get('total'),\n    'folder': folder,\n    'title': title,\n    'genres': genres,\n    'bucket': target_bucket,\n    'model': model,\n    'chapters': len(chapter_files),\n    'refactored_count': len(refactored),\n    'failed_count': len(errors),\n    'errors': errors[:10],\n}\n"
+      },
+      "id": "refactor-1",
+      "name": "Refactor with vLLM (per manga)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Params": {
+      "main": [
+        [
+          {
+            "node": "List Manga (sitemap)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Manga (sitemap)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Manga",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Manga": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Run Crawler (per manga)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Crawler (per manga)": {
+      "main": [
+        [
+          {
+            "node": "Upload to MinIO (per manga)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to MinIO (per manga)": {
+      "main": [
+        [
+          {
+            "node": "Refactor with vLLM (per manga)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refactor with vLLM (per manga)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Manga",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
